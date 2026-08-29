@@ -138,6 +138,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **Transactions:** wrap any multi-row write that must stay consistent (membership changes) — `@Transactional` on the service method or `TransactionTemplate` as in `ProjectService.create`. Repository `@Modifying @Query` methods carry their own `@Transactional` (existing pattern).
 - **Bound collection queries:** paginate (`PageRequest` + `Page<T>`, with an explicit `countQuery`) and select needed columns; don't return unbounded full relation graphs.
 - **Ids are `String`** (uuid columns; `@UuidGenerator` + `columnDefinition = "uuid"`). The JDBC URL carries `stringtype=unspecified` so Postgres infers `uuid`/enum types from string parameters — don't remove it.
+- **Document the raw SQL:** whenever you add or change an API, controller, or service that touches PostgreSQL, create or update `docs/queries/<feature>.md` (one file per `modules/<feature>/`) **in the same change**, listing every query that implementation runs as raw PostgreSQL — including the SQL Spring Data derives for you (derived finders, JPQL `@Query`, `@EntityGraph` joins), not just native queries and stored-procedure calls. Per query: the endpoint/feature it serves, one line on what it does, the raw SQL, and its parameters with example values where useful. Purpose: developers can see exactly what hits the database, run and verify it in `psql`, debug service behavior, and review correctness/performance without translating ORM code into SQL.
 
 ## Shared Utilities, Logging & Tests
 
