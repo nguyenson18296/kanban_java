@@ -16,6 +16,8 @@ import com.kanban.modules.auth.AuthService;
 import com.kanban.modules.auth.JwtService;
 import com.kanban.modules.auth.guards.JwtAuthInterceptor;
 import com.kanban.modules.auth.interfaces.JwtPayload;
+import com.kanban.modules.board.BoardController;
+import com.kanban.modules.board.BoardService;
 import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserController;
 import com.kanban.modules.user.UserRole;
@@ -34,7 +36,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * Port of test/app.e2e-spec.ts (GET / → "Hello World!") plus the Nest wire-format
  * contracts: validation error bodies, guard 401 body, pipe 400 body, unknown route 404.
  */
-@WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class})
+@WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
+    BoardController.class})
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     AppService.class})
 class WebLayerTest {
@@ -49,6 +52,9 @@ class WebLayerTest {
 
   @MockitoBean
   private UserService userService;
+
+  @MockitoBean
+  private BoardService boardService;
 
   @Test
   @DisplayName("/ (GET) → 200 Hello World!")
@@ -82,6 +88,14 @@ class WebLayerTest {
   @DisplayName("JwtAuthGuard without token → { message: 'Unauthorized', statusCode: 401 }")
   void unauthorizedBody() throws Exception {
     mvc.perform(get("/api/auth/me"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", true));
+  }
+
+  @Test
+  @DisplayName("GET /board/:projectId without token → 401 (KAN: board is now guarded)")
+  void boardRequiresToken() throws Exception {
+    mvc.perform(get("/api/board/UrzWUH3e"))
         .andExpect(status().isUnauthorized())
         .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", true));
   }
