@@ -48,7 +48,7 @@ guards and response shapes are identical.
 | `kanban-column` | `modules.kanbancolumn` | `POST /columns` 201, `GET /columns`, `GET /columns/:id`, `PATCH /columns/:id`, `DELETE /columns/:id` 200 |
 | `label` | `modules.label` | `POST /labels` 201, `GET /labels`, `GET /labels/:id`, `PATCH /labels/:id`, `DELETE /labels/:id` 200 |
 | `task` | `modules.task` | `POST /tasks` 🔒 201, `GET /tasks`, `GET /tasks/by-ticket/:ticketId`, `GET /tasks/:id`, `PATCH /tasks/:id` 🔒, `PATCH /tasks/:id/reorder` 🔒, `PATCH /tasks/:id/move` 🔒, `DELETE /tasks/:id` 200, `POST /tasks/:id/subtasks` 🔒 201, `GET /tasks/:id/subtasks`, `PATCH /tasks/:id/subtasks/:subtaskId/reorder`, `POST/DELETE /tasks/:id/assignees` 🔒 (201/200), `POST/DELETE /tasks/:id/labels` 🔒 (201/200) |
-| `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` |
+| `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` 🔒 |
 | `comment` | `modules.comment` | `POST /tasks/:taskId/comments` 🔒 201, `GET /tasks/:taskId/comments`, `PATCH /comments/:id` 🔒, `DELETE /comments/:id` 🔒 204 |
 | `notification` (+ listener) | `modules.notification` | 🔒 `GET /notifications`, `GET /notifications/unread-count`, `PATCH /notifications/read`, `PATCH /notifications/read-all`, `DELETE /notifications/:id` 204 |
 | `activity` (+ listener) | `modules.activity` | `GET /tasks/:taskId/activities` 🔒 |
@@ -59,7 +59,10 @@ guards and response shapes are identical.
 
 🔒 = `@JwtAuth` (Nest `@UseGuards(JwtAuthGuard)`). Unguarded routes are unguarded
 here too — that is the current contract (CLAUDE.md flags it as a known bug, but
-this port preserves behavior rather than changing it).
+this port preserves behavior rather than changing it). **One deliberate divergence:**
+`GET /board/:projectId` is guarded here (🔒) although the Nest app leaves it open —
+the frontend must send a bearer token for the board view. `label` and
+`kanban-column` (including their POST/PATCH/DELETE) remain unguarded, as in Nest.
 
 ### Response serialization
 
