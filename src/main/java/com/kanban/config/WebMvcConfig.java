@@ -6,6 +6,7 @@ import com.kanban.common.validation.ValidatedBodyResolver;
 import com.kanban.common.validation.ValidatedQueryResolver;
 import com.kanban.modules.auth.decorators.CurrentUserResolver;
 import com.kanban.modules.auth.guards.JwtAuthInterceptor;
+import com.kanban.modules.project.guards.ProjectRoleInterceptor;
 import java.util.List;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
@@ -22,10 +23,15 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcConfig implements WebMvcConfigurer {
   private final ObjectMapper objectMapper;
   private final JwtAuthInterceptor jwtAuthInterceptor;
+  private final ProjectRoleInterceptor projectRoleInterceptor;
 
-  public WebMvcConfig(ObjectMapper objectMapper, JwtAuthInterceptor jwtAuthInterceptor) {
+  public WebMvcConfig(
+      ObjectMapper objectMapper,
+      JwtAuthInterceptor jwtAuthInterceptor,
+      ProjectRoleInterceptor projectRoleInterceptor) {
     this.objectMapper = objectMapper;
     this.jwtAuthInterceptor = jwtAuthInterceptor;
+    this.projectRoleInterceptor = projectRoleInterceptor;
   }
 
   @Override
@@ -45,6 +51,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
   @Override
   public void addInterceptors(InterceptorRegistry registry) {
     registry.addInterceptor(jwtAuthInterceptor);
+    registry.addInterceptor(projectRoleInterceptor);
   }
 
   @Override

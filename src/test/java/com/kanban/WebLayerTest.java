@@ -18,6 +18,8 @@ import com.kanban.modules.auth.guards.JwtAuthInterceptor;
 import com.kanban.modules.auth.interfaces.JwtPayload;
 import com.kanban.modules.board.BoardController;
 import com.kanban.modules.board.BoardService;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.guards.ProjectRoleInterceptor;
 import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserController;
 import com.kanban.modules.user.UserRole;
@@ -39,7 +41,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
     BoardController.class})
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
-    AppService.class})
+    ProjectRoleInterceptor.class, AppService.class})
 class WebLayerTest {
   @Autowired
   private MockMvc mvc;
@@ -55,6 +57,9 @@ class WebLayerTest {
 
   @MockitoBean
   private BoardService boardService;
+
+  @MockitoBean
+  private ProjectAccessService projectAccessService;
 
   @Test
   @DisplayName("/ (GET) → 200 Hello World!")
