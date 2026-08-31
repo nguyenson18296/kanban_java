@@ -19,7 +19,7 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Pr
   List<String> findProjectIdsByUserId(@Param("userId") String userId);
 
   @EntityGraph(attributePaths = "user")
-  @Query("select m from ProjectMember m where m.projectId = :projectId order by m.joinedAt asc")
+  @Query("select m from ProjectMember m where m.projectId = :projectId order by m.joinedAt asc, m.userId asc")
   List<ProjectMember> findByProjectIdWithUserOrderByJoinedAtAsc(@Param("projectId") String projectId);
 
   @EntityGraph(attributePaths = {"project", "project.creator"})
