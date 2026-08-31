@@ -28,6 +28,13 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Pr
 
   List<ProjectMember> findByProjectIdAndUserIdIn(String projectId, Collection<String> userIds);
 
+  @EntityGraph(attributePaths = "user")
+  @Query("select m from ProjectMember m where m.projectId = :projectId and m.userId = :userId")
+  Optional<ProjectMember> findByProjectIdAndUserIdWithUser(@Param("projectId") String projectId,
+      @Param("userId") String userId);
+
+  long countByProjectIdAndRole(String projectId, ProjectRole role);
+
   @Transactional
   @Modifying
   @Query("delete from ProjectMember m where m.projectId = :projectId and m.userId in :userIds")

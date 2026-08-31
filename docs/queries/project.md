@@ -28,6 +28,10 @@ create, update, delete, find) is not documented yet — add it here when those p
 | 8 | Bulk delete memberships | `ProjectMemberRepository.deleteByProjectIdAndUserIdIn` | `DELETE /projects/{id}/members` |
 | 9 | Project id of a task | `JpaProjectAccessQueries.findProjectIdForTask` | `ProjectAccessService.ensureTaskRole` / `getProjectIdForTask` (no route wired yet — RBAC Task 11) |
 | 10 | Project id of a column | `JpaProjectAccessQueries.findProjectIdForColumn` | `ProjectAccessService.ensureColumnRole` / `getProjectIdForColumn` (no route wired yet — RBAC Task 10/11) |
+| 11 | Membership by PK + user | `ProjectMemberRepository.findByProjectIdAndUserIdWithUser` | `PATCH /projects/{id}/members/{userId}` (response) |
+| 12 | Count members with a role | `ProjectMemberRepository.countByProjectIdAndRole` | `PATCH /projects/{id}/members/{userId}` (last-owner guard) |
+| 13 | Update membership role | `ProjectMemberRepository.save` on an existing row | `PATCH /projects/{id}/members/{userId}` |
+| 14 | Lock project row | `ProjectRepository.findByIdForUpdate` | `PATCH /projects/{id}/members/{userId}` (serializes membership changes) |
 
 ## Queries
 
@@ -185,6 +189,76 @@ WHERE col.id = :columnId;
 -- :columnId = 7
 ```
 
+### 11. Membership by primary key (with user)
+
+`ProjectMemberRepository.findByProjectIdAndUserIdWithUser(projectId, userId)` — JPQL
+`select m from ProjectMember m where m.projectId = :projectId and m.userId = :userId` +
+`@EntityGraph(attributePaths = "user")`. The single-row counterpart of #4: `ProjectService.changeMemberRole`
+re-reads the target membership after the update so the response (`toJsonWithUser()`) carries
+the `user` relation without a second query.
+
+```sql
+SELECT m.project_id, m.user_id, m.role, m.joined_at,
+       u.id, u.email, u.full_name, u.role, u.avatar_url, u.is_active, u.created_at, u.updated_at
+FROM project_members m
+LEFT JOIN users u ON u.id = m.user_id
+WHERE m.project_id = :projectId
+  AND m.user_id    = :userId;
+
+-- :projectId = 'UrzWUH3e', :userId = '22222222-2222-4222-8222-222222222222'
+```
+
+### 12. Count members holding a role
+
+`ProjectMemberRepository.countByProjectIdAndRole(projectId, role)` — derived query.
+`ProjectService.ensureNotLastOwner` runs it (role = `owner`) before demoting an owner; if
+`count - leavingOwners < 1` the service throws `409 A project must have at least one owner`.
+Only reliable while the caller holds the project-row lock (#14) in the same transaction —
+without it, two concurrent demotions can both read the same count and together remove the
+last owner.
+
+```sql
+SELECT count(*)
+FROM project_members
+WHERE project_id = :projectId
+  AND role       = :role;
+
+-- :projectId = 'UrzWUH3e', :role = 'owner'
+```
+
+### 13. Update membership role
+
+`ProjectService.changeMemberRole` → `memberRepository.save(target)` on an already-loaded row,
+only when the new role differs from the current one (a same-role request issues no write).
+Because `ProjectMember` has an assigned composite id (see the note under #7), `save` goes
+through `em.merge`: Hibernate runs query **#1** (SELECT by PK) and then the UPDATE.
+
+```sql
+UPDATE project_members
+SET role = :role
+WHERE project_id = :projectId
+  AND user_id    = :userId;
+
+-- :role = 'viewer', :projectId = 'UrzWUH3e', :userId = '22222222-2222-4222-8222-222222222222'
+```
+
+### 14. Lock project row
+
+`ProjectRepository.findByIdForUpdate(projectId)` — JPQL + `@Lock(PESSIMISTIC_WRITE)`.
+First statement of `ProjectService.changeMemberRole` (`@Transactional`): serializes all
+membership mutations on one project so the owner count (#12) cannot go stale between read
+and update. A missing project throws the same masked 404 as the access gate. Held until the
+transaction commits.
+
+```sql
+SELECT id, name, tag, ticket_counter, description, created_by, created_at, updated_at
+FROM projects
+WHERE id = :projectId
+FOR UPDATE;
+
+-- :projectId = 'UrzWUH3e'
+```
+
 ## Endpoint query sequences
 
 What actually hits the database per request, in order. `ProjectRepository.existsById`
@@ -197,6 +271,7 @@ because these endpoints run it first.
 | `GET /projects/{id}/members` | `existsById` → **#4** |
 | `POST /projects/{id}/members` 🔒 | `existsById` → **#1** (gate, `admin`) → `users` lookup for the candidate ids → **#6** → **#7** ×N |
 | `DELETE /projects/{id}/members` 🔒 | `existsById` → **#1** (gate, `admin`) → team-members DELETE → **#8** |
+| `PATCH /projects/{id}/members/{userId}` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `admin`; `owner` enforced in-service when the current or new role is `owner`/`admin`) → **#1** (target membership) → **#12** only when demoting an `owner` → **#1** + **#13** only when the role actually changes → **#11** |
 | `POST /projects/{projectId}/teams` 🔒 | **#1** (gate, `admin`) → team INSERT |
 | `POST /projects/{projectId}/teams/{teamId}/members` 🔒 | **#1** (gate, `admin`) → team lookup → **#2** → team-member exists? (`findByTeamIdAndUserId`) → team-member INSERT |
 | `DELETE /projects/{projectId}/teams/{teamId}/members/{userId}` 🔒 | **#1** (gate, `admin`) → team-member DELETE |
