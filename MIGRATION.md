@@ -43,7 +43,7 @@ guards and response shapes are identical.
 | `app.controller` | `com.kanban.AppController` | `GET /api` → `Hello World!` |
 | `auth` | `modules.auth` | `POST /auth/register` 201, `POST /auth/login` 200, `POST /auth/refresh` 200, `POST /auth/logout` 200, `POST /auth/logout-all` 200 🔒, `GET /auth/me` 🔒 |
 | `user` | `modules.user` | `GET /users`, `GET /users/me/projects` 🔒, `GET /users/:id`, `GET /users/:id/projects` |
-| `project` (+ `ProjectAccessService`) | `modules.project` | `POST /projects` 🔒 201, `GET /projects`, `GET /projects/:id`, `PATCH /projects/:id`, `DELETE /projects/:id` 200, `GET /projects/:id/members`, `POST /projects/:id/members` 🔒 201, `DELETE /projects/:id/members` 🔒 204 |
+| `project` (+ `ProjectAccessService`) | `modules.project` | `POST /projects` 🔒 201, `GET /projects`, `GET /projects/:id`, `PATCH /projects/:id`, `DELETE /projects/:id` 200, `GET /projects/:id/members`, `POST /projects/:id/members` 🔒 201, `DELETE /projects/:id/members` 🔒 204, `PATCH /projects/:id/members/:userId` 🔒 |
 | `team` | `modules.team` | `projects/:projectId/teams` — `POST` 🔒 201, `GET`, `GET /:teamId`, `GET /:teamId/members`, `POST /:teamId/members` 🔒 201, `DELETE /:teamId/members/:userId` 🔒 204 |
 | `kanban-column` | `modules.kanbancolumn` | `POST /columns` 201, `GET /columns`, `GET /columns/:id`, `PATCH /columns/:id`, `DELETE /columns/:id` 200 |
 | `label` | `modules.label` | `POST /labels` 201, `GET /labels`, `GET /labels/:id`, `PATCH /labels/:id`, `DELETE /labels/:id` 200 |

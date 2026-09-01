@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
@@ -266,6 +267,71 @@ public class ProjectService {
     } catch (RuntimeException e) {
       log.error("Failed to remove project members", e);
       throw internal("Failed to remove project members", e);
+    }
+  }
+
+  /**
+   * Change a member's role. Base gate: admin+. Touching owner/admin in either
+   * direction (current role or new role) is owner-only. Self-change is always
+   * rejected. Demoting the last owner is rejected. A same-role change is a no-op.
+   *
+   * <p>Runs in one transaction and locks the project row first
+   * ({@code PESSIMISTIC_WRITE}), so concurrent role changes on the same project
+   * serialize and the owner count in {@link #ensureNotLastOwner} cannot go stale
+   * (two owners demoting each other would otherwise both pass the check). The
+   * missing-project 404 matches {@code ensureRole}'s masked body, preserving
+   * anti-enumeration.
+   */
+  @Transactional
+  public ProjectMember changeMemberRole(String projectId, String targetUserId, ProjectRole newRole, String actorId) {
+    projectRepository.findByIdForUpdate(projectId).orElseThrow(() -> projectNotFound(projectId));
+
+    ProjectMember actor = projectAccessService.ensureRole(projectId, actorId, ProjectRole.ADMIN);
+
+    if (actorId.equals(targetUserId)) {
+      throw new ForbiddenException(Json.map(
+          "statusCode", 403,
+          "message", "You cannot change your own role"));
+    }
+
+    ProjectMember target = memberRepository.findByProjectIdAndUserId(projectId, targetUserId).orElse(null);
+    if (target == null) {
+      throw new NotFoundException(Json.map(
+          "statusCode", 404,
+          "message", "User is not a member of this project"));
+    }
+
+    // Touching owner/admin roles in either direction is owner-only.
+    boolean touchesElevatedRole = isElevated(target.getRole()) || isElevated(newRole);
+    ProjectRole requiredRole = touchesElevatedRole ? ProjectRole.OWNER : ProjectRole.ADMIN;
+    if (actor.getRole().rank() < requiredRole.rank()) {
+      throw new ForbiddenException(Json.map(
+          "statusCode", 403,
+          "message", "This action requires at least " + requiredRole.value() + " role"));
+    }
+
+    if (target.getRole() == ProjectRole.OWNER && newRole != ProjectRole.OWNER) {
+      ensureNotLastOwner(projectId, List.of(targetUserId));
+    }
+
+    if (target.getRole() != newRole) {
+      target.setRole(newRole);
+      memberRepository.save(target);
+    }
+
+    return memberRepository.findByProjectIdAndUserIdWithUser(projectId, targetUserId).orElse(target);
+  }
+
+  private static boolean isElevated(ProjectRole role) {
+    return role == ProjectRole.OWNER || role == ProjectRole.ADMIN;
+  }
+
+  private void ensureNotLastOwner(String projectId, List<String> leavingOwnerIds) {
+    long ownersCount = memberRepository.countByProjectIdAndRole(projectId, ProjectRole.OWNER);
+    if (ownersCount - leavingOwnerIds.size() < 1) {
+      throw new ConflictException(Json.map(
+          "statusCode", 409,
+          "message", "A project must have at least one owner"));
     }
   }
 

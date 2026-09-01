@@ -19,7 +19,7 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Pr
   List<String> findProjectIdsByUserId(@Param("userId") String userId);
 
   @EntityGraph(attributePaths = "user")
-  @Query("select m from ProjectMember m where m.projectId = :projectId order by m.joinedAt asc")
+  @Query("select m from ProjectMember m where m.projectId = :projectId order by m.joinedAt asc, m.userId asc")
   List<ProjectMember> findByProjectIdWithUserOrderByJoinedAtAsc(@Param("projectId") String projectId);
 
   @EntityGraph(attributePaths = {"project", "project.creator"})
@@ -27,6 +27,13 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Pr
   List<ProjectMember> findByUserIdWithProjectOrderByJoinedAtDesc(@Param("userId") String userId);
 
   List<ProjectMember> findByProjectIdAndUserIdIn(String projectId, Collection<String> userIds);
+
+  @EntityGraph(attributePaths = "user")
+  @Query("select m from ProjectMember m where m.projectId = :projectId and m.userId = :userId")
+  Optional<ProjectMember> findByProjectIdAndUserIdWithUser(@Param("projectId") String projectId,
+      @Param("userId") String userId);
+
+  long countByProjectIdAndRole(String projectId, ProjectRole role);
 
   @Transactional
   @Modifying

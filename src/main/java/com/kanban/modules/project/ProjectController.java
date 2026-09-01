@@ -7,6 +7,7 @@ import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.guards.JwtAuth;
 import com.kanban.modules.project.dto.CreateProjectDto;
 import com.kanban.modules.project.dto.ManageProjectMembersDto;
+import com.kanban.modules.project.dto.UpdateMemberRoleDto;
 import com.kanban.modules.project.dto.UpdateProjectDto;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -121,5 +122,22 @@ public class ProjectController {
   public void removeMembers(@Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id,
       @ValidatedBody ManageProjectMembersDto dto, @CurrentUser("id") String userId) {
     projectService.removeMembers(id, dto.user_ids, userId);
+  }
+
+  @PatchMapping("/{id}/members/{userId}")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @Operation(summary = "Change a member's role (admin+; owner for owner/admin changes)")
+  @Parameter(name = "id", description = "Project ID")
+  @Parameter(name = "userId", description = "User UUID")
+  @ApiResponse(responseCode = "200", description = "Member role updated")
+  @ApiResponse(responseCode = "403", description = "Insufficient project role")
+  @ApiResponse(responseCode = "404",
+      description = "Project or member not found (also returned when the caller is not a project member)")
+  @ApiResponse(responseCode = "409", description = "Project must keep at least one owner")
+  public Map<String, Object> changeMemberRole(@Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id,
+      @Param(value = "userId", pipe = Param.Pipe.UUID) String userId,
+      @ValidatedBody UpdateMemberRoleDto dto, @CurrentUser("id") String actorId) {
+    return projectService.changeMemberRole(id, userId, dto.role, actorId).toJsonWithUser();
   }
 }
