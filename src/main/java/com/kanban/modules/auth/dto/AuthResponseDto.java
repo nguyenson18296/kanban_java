@@ -11,7 +11,7 @@ public record AuthResponseDto(
     AuthUserDto user) {
 
   public record AuthUserDto(
-      @Schema(example = "a1b2c3d4-e5f6-7890-abcd-ef1234567890") String id,
+      @Schema(example = "a1b2c3d4-e5f6-4890-abcd-ef1234567890") String id,
       @Schema(example = "john@example.com") String email,
       @Schema(example = "John Doe") String full_name,
       UserRole role,

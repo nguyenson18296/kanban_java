@@ -55,7 +55,7 @@ public class CreateTaskDto extends ValidatedDto {
   @IsInt
   public Integer team_id;
 
-  @Schema(example = "a1b2c3d4-e5f6-7890-abcd-ef1234567890", description = "UUID of the user who created this task")
+  @Schema(example = "a1b2c3d4-e5f6-4890-abcd-ef1234567890", description = "UUID of the user who created this task")
   @IsOptional
   @IsUUID
   public String created_by;
@@ -66,7 +66,7 @@ public class CreateTaskDto extends ValidatedDto {
   @IsDate
   public Instant due_date;
 
-  @Schema(example = "a1b2c3d4-e5f6-7890-abcd-ef1234567890", description = "UUID of the parent task (makes this a subtask)")
+  @Schema(example = "a1b2c3d4-e5f6-4890-abcd-ef1234567890", description = "UUID of the parent task (makes this a subtask)")
   @IsOptional
   @IsUUID
   public String parent_id;
