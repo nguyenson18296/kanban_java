@@ -23,15 +23,15 @@ create, update, delete, find) is not documented yet — add it here when those p
 | 3 | Project ids of a user | `ProjectMemberRepository.findProjectIdsByUserId` | Socket.IO connect (presence rooms); `ProjectAccessService.getProjectIdsForUser` |
 | 4 | Members of a project + user | `ProjectMemberRepository.findByProjectIdWithUserOrderByJoinedAtAsc` | `GET /projects/{id}/members` |
 | 5 | Projects of a user + project + creator | `ProjectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc` | `GET /users/me/projects`, `GET /users/{id}/projects` |
-| 6 | Existing memberships among candidates | `ProjectMemberRepository.findByProjectIdAndUserIdIn` | `POST /projects/{id}/members` |
+| 6 | Existing memberships among candidates | `ProjectMemberRepository.findByProjectIdAndUserIdIn` | `POST /projects/{id}/members`, `DELETE /projects/{id}/members` (target roles) |
 | 7 | Insert membership | `ProjectMemberRepository.save` / `saveAll` | `POST /projects` (creator → owner), `POST /projects/{id}/members` |
 | 8 | Bulk delete memberships | `ProjectMemberRepository.deleteByProjectIdAndUserIdIn` | `DELETE /projects/{id}/members` |
 | 9 | Project id of a task | `JpaProjectAccessQueries.findProjectIdForTask` | `ProjectAccessService.ensureTaskRole` / `getProjectIdForTask` (no route wired yet — RBAC Task 11) |
 | 10 | Project id of a column | `JpaProjectAccessQueries.findProjectIdForColumn` | `ProjectAccessService.ensureColumnRole` / `getProjectIdForColumn` (no route wired yet — RBAC Task 10/11) |
 | 11 | Membership by PK + user | `ProjectMemberRepository.findByProjectIdAndUserIdWithUser` | `PATCH /projects/{id}/members/{userId}` (response) |
-| 12 | Count members with a role | `ProjectMemberRepository.countByProjectIdAndRole` | `PATCH /projects/{id}/members/{userId}` (last-owner guard) |
+| 12 | Count members with a role | `ProjectMemberRepository.countByProjectIdAndRole` | `PATCH /projects/{id}/members/{userId}`, `DELETE /projects/{id}/members` (last-owner guard) |
 | 13 | Update membership role | `ProjectMemberRepository.save` on an existing row | `PATCH /projects/{id}/members/{userId}` |
-| 14 | Lock project row | `ProjectRepository.findByIdForUpdate` | `PATCH /projects/{id}/members/{userId}` (serializes membership changes) |
+| 14 | Lock project row | `ProjectRepository.findByIdForUpdate` | `PATCH /projects/{id}/members/{userId}`, `DELETE /projects/{id}/members` (serializes membership changes) |
 
 ## Queries
 
@@ -118,6 +118,9 @@ ORDER BY m.joined_at DESC;
 
 `ProjectMemberRepository.findByProjectIdAndUserIdIn(projectId, userIds)` — derived query.
 `ProjectService.addMembers` uses it to skip users who are already members (idempotent add).
+`ProjectService.removeMembers` uses it to read the targets' roles: an `owner`/`admin` among
+the targets raises the required actor role to `owner`, and leaving owners feed the
+last-owner guard (#12).
 
 ```sql
 SELECT project_id, user_id, role, joined_at
@@ -211,7 +214,8 @@ WHERE m.project_id = :projectId
 ### 12. Count members holding a role
 
 `ProjectMemberRepository.countByProjectIdAndRole(projectId, role)` — derived query.
-`ProjectService.ensureNotLastOwner` runs it (role = `owner`) before demoting an owner; if
+`ProjectService.ensureNotLastOwner` runs it (role = `owner`) before demoting an owner
+(`changeMemberRole`) or removing owners (`removeMembers`, self-leave included); if
 `count - leavingOwners < 1` the service throws `409 A project must have at least one owner`.
 Only reliable while the caller holds the project-row lock (#14) in the same transaction —
 without it, two concurrent demotions can both read the same count and together remove the
@@ -245,7 +249,8 @@ WHERE project_id = :projectId
 ### 14. Lock project row
 
 `ProjectRepository.findByIdForUpdate(projectId)` — JPQL + `@Lock(PESSIMISTIC_WRITE)`.
-First statement of `ProjectService.changeMemberRole` (`@Transactional`): serializes all
+First statement of `ProjectService.changeMemberRole` and `ProjectService.removeMembers`
+(both `@Transactional`): serializes all
 membership mutations on one project so the owner count (#12) cannot go stale between read
 and update. A missing project throws the same masked 404 as the access gate. Held until the
 transaction commits.
@@ -270,7 +275,7 @@ because these endpoints run it first.
 | `POST /projects` | project INSERT (see project CRUD) → **#7** (`owner`, preceded by the merge SELECT) — one transaction |
 | `GET /projects/{id}/members` | `existsById` → **#4** |
 | `POST /projects/{id}/members` 🔒 | `existsById` → **#1** (gate, `admin`) → `users` lookup for the candidate ids → **#6** → **#7** ×N |
-| `DELETE /projects/{id}/members` 🔒 | `existsById` → **#1** (gate, `admin`) → team-members DELETE → **#8** |
+| `DELETE /projects/{id}/members` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `viewer`; `admin`/`owner` enforced in-service per target roles, self-leave exempt) → **#6** (target roles) → **#12** only when owners leave → team-members DELETE → **#8** |
 | `PATCH /projects/{id}/members/{userId}` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `admin`; `owner` enforced in-service when the current or new role is `owner`/`admin`) → **#1** (target membership) → **#12** only when demoting an `owner` → **#1** + **#13** only when the role actually changes → **#11** |
 | `POST /projects/{projectId}/teams` 🔒 | **#1** (gate, `admin`) → team INSERT |
 | `POST /projects/{projectId}/teams/{teamId}/members` 🔒 | **#1** (gate, `admin`) → team lookup → **#2** → team-member exists? (`findByTeamIdAndUserId`) → team-member INSERT |
