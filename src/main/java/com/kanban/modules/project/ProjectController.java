@@ -113,12 +113,13 @@ public class ProjectController {
   @ResponseStatus(HttpStatus.NO_CONTENT)
   @JwtAuth
   @SecurityRequirement(name = "bearer")
-  @Operation(summary = "Remove members from a project (requires admin+)")
+  @Operation(summary = "Remove members from a project (admin+; owner for admin/owner targets; self-leave at any role)")
   @Parameter(name = "id", description = "Project ID")
   @ApiResponse(responseCode = "204", description = "Members removed")
   @ApiResponse(responseCode = "403", description = "Insufficient project role")
   @ApiResponse(responseCode = "404",
       description = "Project not found (also returned when the caller is not a project member)")
+  @ApiResponse(responseCode = "409", description = "Project must keep at least one owner")
   public void removeMembers(@Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id,
       @ValidatedBody ManageProjectMembersDto dto, @CurrentUser("id") String userId) {
     projectService.removeMembers(id, dto.user_ids, userId);

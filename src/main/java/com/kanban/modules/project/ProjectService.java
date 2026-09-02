@@ -255,19 +255,49 @@ public class ProjectService {
     }
   }
 
+  /**
+   * Remove members from a project. Base gate: viewer+ (any member may self-leave).
+   * Self-leave (exactly one target id, equal to the actor) is allowed at any
+   * role. Otherwise, removing an owner/admin requires owner; removing a
+   * member/viewer requires admin. Removing the last owner is rejected.
+   *
+   * <p>Runs in one transaction and locks the project row first
+   * ({@code PESSIMISTIC_WRITE}) like {@link #changeMemberRole}, so concurrent
+   * membership changes on the same project serialize and the owner count in
+   * {@link #ensureNotLastOwner} cannot go stale (two owners self-leaving would
+   * otherwise both pass the check). The missing-project 404 matches
+   * {@code ensureRole}'s masked body, preserving anti-enumeration.
+   */
+  @Transactional
   public void removeMembers(String projectId, List<String> userIds, String actorId) {
-    try {
-      ensureProjectExists(projectId);
-      projectAccessService.ensureRole(projectId, actorId, ProjectRole.ADMIN);
-      // Remove from team_members first (user leaving project should leave their team too)
-      teamMemberRepository.deleteByProjectIdAndUserIdIn(projectId, userIds);
-      memberRepository.deleteByProjectIdAndUserIdIn(projectId, userIds);
-    } catch (NotFoundException | ForbiddenException e) {
-      throw e;
-    } catch (RuntimeException e) {
-      log.error("Failed to remove project members", e);
-      throw internal("Failed to remove project members", e);
+    projectRepository.findByIdForUpdate(projectId).orElseThrow(() -> projectNotFound(projectId));
+
+    ProjectMember actor = projectAccessService.ensureRole(projectId, actorId, ProjectRole.VIEWER);
+
+    boolean isSelfLeave = userIds.size() == 1 && userIds.getFirst().equals(actorId);
+    List<ProjectMember> targets = memberRepository.findByProjectIdAndUserIdIn(projectId, userIds);
+
+    if (!isSelfLeave) {
+      boolean touchesElevatedRole = targets.stream().anyMatch(t -> isElevated(t.getRole()));
+      ProjectRole requiredRole = touchesElevatedRole ? ProjectRole.OWNER : ProjectRole.ADMIN;
+      if (actor.getRole().rank() < requiredRole.rank()) {
+        throw new ForbiddenException(Json.map(
+            "statusCode", 403,
+            "message", "This action requires at least " + requiredRole.value() + " role"));
+      }
     }
+
+    List<String> leavingOwnerIds = targets.stream()
+        .filter(t -> t.getRole() == ProjectRole.OWNER)
+        .map(ProjectMember::getUserId)
+        .toList();
+    if (!leavingOwnerIds.isEmpty()) {
+      ensureNotLastOwner(projectId, leavingOwnerIds);
+    }
+
+    // A user leaving the project also leaves any team in it.
+    teamMemberRepository.deleteByProjectIdAndUserIdIn(projectId, userIds);
+    memberRepository.deleteByProjectIdAndUserIdIn(projectId, userIds);
   }
 
   /**

@@ -1,6 +1,7 @@
 package com.kanban.modules.project;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -14,6 +15,7 @@ import com.kanban.common.exception.HttpException;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.modules.team.TeamMemberRepository;
 import com.kanban.modules.user.UserRepository;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -193,6 +195,100 @@ class ProjectServiceTest {
 
       assertThat(result.getRole()).isEqualTo(ProjectRole.MEMBER);
       verify(memberRepository, never()).save(any());
+    }
+  }
+  @Nested
+  class RemoveMembers {
+    @BeforeEach
+    void lockableProject() {
+      // removeMembers serializes per project by locking the project row first
+      when(projectRepository.findByIdForUpdate("proj1234")).thenReturn(Optional.of(new Project()));
+    }
+
+    @Test
+    @DisplayName("404s (masked) when the project does not exist, before any membership delete")
+    void notFoundWhenProjectMissing() {
+      when(projectRepository.findByIdForUpdate("ghost123")).thenReturn(Optional.empty());
+
+      assertThatThrownBy(() -> service.removeMembers("ghost123", List.of("target"), "actor"))
+          .isInstanceOf(NotFoundException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 404)
+              .containsEntry("message", "Project with id \"ghost123\" not found"));
+      verify(memberRepository, never()).deleteByProjectIdAndUserIdIn("ghost123", List.of("target"));
+    }
+
+    @Test
+    @DisplayName("allows a viewer to remove themselves (self-leave)")
+    void allowsSelfLeave() {
+      when(projectAccessService.ensureRole("proj1234", "actor", ProjectRole.VIEWER))
+          .thenReturn(member("actor", ProjectRole.VIEWER));
+      when(memberRepository.findByProjectIdAndUserIdIn("proj1234", List.of("actor")))
+          .thenReturn(List.of(member("actor", ProjectRole.VIEWER)));
+
+      assertThatCode(() -> service.removeMembers("proj1234", List.of("actor"), "actor"))
+          .doesNotThrowAnyException();
+
+      verify(teamMemberRepository).deleteByProjectIdAndUserIdIn("proj1234", List.of("actor"));
+      verify(memberRepository).deleteByProjectIdAndUserIdIn("proj1234", List.of("actor"));
+    }
+
+    @Test
+    @DisplayName("blocks a member from removing someone else")
+    void blocksMemberRemovingSomeoneElse() {
+      when(projectAccessService.ensureRole("proj1234", "actor", ProjectRole.VIEWER))
+          .thenReturn(member("actor", ProjectRole.MEMBER));
+      when(memberRepository.findByProjectIdAndUserIdIn("proj1234", List.of("victim")))
+          .thenReturn(List.of(member("victim", ProjectRole.MEMBER)));
+
+      assertThatThrownBy(() -> service.removeMembers("proj1234", List.of("victim"), "actor"))
+          .isInstanceOf(ForbiddenException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 403)
+              .containsEntry("message", "This action requires at least admin role"));
+    }
+
+    @Test
+    @DisplayName("blocks an admin from removing another admin (owner-only)")
+    void blocksAdminRemovingAdmin() {
+      when(projectAccessService.ensureRole("proj1234", "actor", ProjectRole.VIEWER))
+          .thenReturn(member("actor", ProjectRole.ADMIN));
+      when(memberRepository.findByProjectIdAndUserIdIn("proj1234", List.of("victim")))
+          .thenReturn(List.of(member("victim", ProjectRole.ADMIN)));
+
+      assertThatThrownBy(() -> service.removeMembers("proj1234", List.of("victim"), "actor"))
+          .isInstanceOf(ForbiddenException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 403)
+              .containsEntry("message", "This action requires at least owner role"));
+    }
+
+    @Test
+    @DisplayName("409s when removal would leave zero owners (including self-leave)")
+    void conflictsOnLastOwnerRemoval() {
+      when(projectAccessService.ensureRole("proj1234", "actor", ProjectRole.VIEWER))
+          .thenReturn(member("actor", ProjectRole.OWNER));
+      when(memberRepository.findByProjectIdAndUserIdIn("proj1234", List.of("actor")))
+          .thenReturn(List.of(member("actor", ProjectRole.OWNER)));
+      when(memberRepository.countByProjectIdAndRole("proj1234", ProjectRole.OWNER)).thenReturn(1L);
+
+      assertThatThrownBy(() -> service.removeMembers("proj1234", List.of("actor"), "actor"))
+          .isInstanceOf(ConflictException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 409)
+              .containsEntry("message", "A project must have at least one owner"));
+    }
+
+    @Test
+    @DisplayName("lets an owner remove an admin")
+    void ownerRemovesAdmin() {
+      when(projectAccessService.ensureRole("proj1234", "actor", ProjectRole.VIEWER))
+          .thenReturn(member("actor", ProjectRole.OWNER));
+      when(memberRepository.findByProjectIdAndUserIdIn("proj1234", List.of("victim")))
+          .thenReturn(List.of(member("victim", ProjectRole.ADMIN)));
+
+      assertThatCode(() -> service.removeMembers("proj1234", List.of("victim"), "actor"))
+          .doesNotThrowAnyException();
     }
   }
 }
