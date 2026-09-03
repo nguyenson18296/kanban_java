@@ -237,6 +237,11 @@ public final class ClassValidator {
       boolean ok = value instanceof String s && values.contains(s);
       return ok ? null : prop + " must be one of the following values: " + String.join(", ", values);
     }
+    if (a instanceof IsIn isIn) {
+      List<String> values = Arrays.asList(isIn.value());
+      boolean ok = value instanceof String s && values.contains(s);
+      return ok ? null : prop + " must be one of the following values: " + String.join(", ", values);
+    }
     return null;
   }
 
@@ -272,7 +277,7 @@ public final class ClassValidator {
   private static final List<Class<? extends Annotation>> CONSTRAINTS = Arrays.asList(
       IsString.class, IsEmail.class, IsBoolean.class, IsDate.class, IsArray.class, IsNotEmpty.class,
       ArrayNotEmpty.class, ArrayMinSize.class, ArrayMaxSize.class, MinLength.class, MaxLength.class,
-      Matches.class, Min.class, Max.class, IsInt.class, IsUUID.class, IsEnum.class);
+      Matches.class, Min.class, Max.class, IsInt.class, IsUUID.class, IsEnum.class, IsIn.class);
 
   private static List<Annotation> constraintAnnotations(Field f) {
     List<Annotation> out = new ArrayList<>();
