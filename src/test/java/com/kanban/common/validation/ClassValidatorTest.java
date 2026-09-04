@@ -9,8 +9,10 @@ import com.kanban.modules.auth.dto.RegisterDto;
 import com.kanban.modules.board.dto.BoardQueryDto;
 import com.kanban.modules.comment.dto.CommentQueryDto;
 import com.kanban.modules.comment.dto.CreateCommentDto;
+import com.kanban.modules.invitation.dto.CreateInvitationDto;
 import com.kanban.modules.notification.dto.NotificationQueryDto;
 import com.kanban.modules.presence.dto.GetPresenceQueryDto;
+import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.project.dto.ManageProjectMembersDto;
 import com.kanban.modules.task.TaskStatus;
 import com.kanban.modules.task.dto.CreateTaskDto;
@@ -80,6 +82,20 @@ class ClassValidatorTest {
     assertThatThrownBy(() -> ClassValidator.validate(CreateTaskDto.class, plain))
         .satisfies(e -> assertThat(messagesOf(e)).containsExactly(
             "status must be one of the following values: open, in_progress, in_review, done, cancelled"));
+  }
+
+  @Test
+  @DisplayName("IsIn rejects a value outside the explicit allow-list (owner), unlike IsEnum which allows every enum value")
+  void isIn() {
+    Map<String, Object> rejected = Json.map("email", "a@b.com", "role", "owner");
+    assertThatThrownBy(() -> ClassValidator.validate(CreateInvitationDto.class, rejected))
+        .isInstanceOf(BadRequestException.class)
+        .satisfies(e -> assertThat(messagesOf(e)).containsExactly(
+            "role must be one of the following values: admin, member, viewer"));
+
+    CreateInvitationDto allowed = ClassValidator.validate(CreateInvitationDto.class,
+        Json.map("email", "a@b.com", "role", "viewer"));
+    assertThat(allowed.role).isEqualTo(ProjectRole.VIEWER);
   }
 
   @Test
