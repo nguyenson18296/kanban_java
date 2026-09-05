@@ -1,12 +1,19 @@
 package com.kanban.modules.invitation;
 
 import com.kanban.common.api.ApiListResponse;
+import com.kanban.common.events.EventBus;
+import com.kanban.common.exception.BadRequestException;
 import com.kanban.common.exception.ConflictException;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
 import com.kanban.modules.invitation.dto.CreateInvitationDto;
+import com.kanban.modules.notification.events.ProjectInvitedEvent;
+import com.kanban.modules.project.Project;
 import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectMember;
+import com.kanban.modules.project.ProjectMemberRepository;
 import com.kanban.modules.project.ProjectRole;
+import com.kanban.modules.project.ProjectService;
 import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserRepository;
 import java.nio.charset.StandardCharsets;
@@ -20,12 +27,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Task 8: create / findPending / revoke. Task 9 adds {@code accept(...)} to
- * this same service (and, with it, {@code ProjectService}, {@code DataSource}
- * and the notification event emitter as constructor dependencies) — not
- * injected here since nothing in this task's three methods uses them.
+ * Project invitations: create / findPending / revoke (Task 8) and accept +
+ * the PROJECT_INVITED notification emit (Task 9).
  */
 @Service
 public class InvitationService {
@@ -35,12 +41,19 @@ public class InvitationService {
   private final ProjectInvitationRepository invitationRepository;
   private final UserRepository userRepository;
   private final ProjectAccessService projectAccessService;
+  private final ProjectMemberRepository memberRepository;
+  private final ProjectService projectService;
+  private final EventBus eventBus;
 
   public InvitationService(ProjectInvitationRepository invitationRepository, UserRepository userRepository,
-      ProjectAccessService projectAccessService) {
+      ProjectAccessService projectAccessService, ProjectMemberRepository memberRepository,
+      ProjectService projectService, EventBus eventBus) {
     this.invitationRepository = invitationRepository;
     this.userRepository = userRepository;
     this.projectAccessService = projectAccessService;
+    this.memberRepository = memberRepository;
+    this.projectService = projectService;
+    this.eventBus = eventBus;
   }
 
   /** {@code randomBytes(32).toString('hex')} */
@@ -90,7 +103,21 @@ public class InvitationService {
     invitation.setExpiresAt(Instant.now().plus(INVITATION_TTL));
     ProjectInvitation saved = invitationRepository.saveAndFlush(invitation);
 
-    // Task 9 adds: in-app notification when the invitee already has an account.
+    // In-app notification when the invitee already has an account.
+    if (invitee != null) {
+      Project project = projectService.findOneById(projectId);
+      User inviter = userRepository.findById(actorId).orElse(null);
+      // Spring dispatches by ProjectInvitedEvent type to the async DB-notification and WebSocket listeners.
+      eventBus.emit(new ProjectInvitedEvent(actorId, saved.getId(),
+          List.of(invitee.getId()), Json.map(
+              "project_id", projectId,
+              "project_name", project.getName(),
+              "role", role,
+              "inviter", Json.map(
+                  "id", actorId,
+                  "full_name", inviter != null ? inviter.getFullName() : "",
+                  "avatar_url", inviter != null ? inviter.getAvatarUrl() : null))));
+    }
 
     // The raw token is returned exactly once; only its hash is stored.
     Map<String, Object> json = saved.toJson(false);
@@ -120,5 +147,48 @@ public class InvitationService {
           "message", "Invitation has already been accepted"));
     }
     // Already revoked — idempotent.
+  }
+
+  /**
+   * Accept an invitation by its raw token. Every invalid-token condition
+   * (unknown/expired/revoked/used/wrong email) throws the SAME generic 400 so
+   * this endpoint cannot be used as an oracle for token validity or invitee
+   * emails. Only after that check passes is membership conflict distinguished
+   * (409). Membership creation + marking the invitation accepted happen
+   * atomically.
+   */
+  @Transactional
+  public Project accept(String token, User user) {
+    ProjectInvitation invitation = invitationRepository.findByTokenHash(hashToken(token)).orElse(null);
+    if (invitation == null || isInvalidFor(invitation, user)) {
+      throw invalidInvitation();
+    }
+
+    ProjectMember membership = projectAccessService.getMembership(invitation.getProjectId(), user.getId());
+    if (membership != null) {
+      throw new ConflictException(Json.map(
+          "statusCode", 409,
+          "message", "You are already a member of this project"));
+    }
+
+    memberRepository.save(new ProjectMember(invitation.getProjectId(), user.getId(), invitation.getRole()));
+    invitation.setAcceptedAt(Instant.now());
+    invitation.setAcceptedBy(user.getId());
+    invitationRepository.save(invitation);
+
+    return projectService.findOneById(invitation.getProjectId());
+  }
+
+  private static boolean isInvalidFor(ProjectInvitation invitation, User user) {
+    return invitation.getRevokedAt() != null
+        || invitation.getAcceptedAt() != null
+        || !invitation.getExpiresAt().isAfter(Instant.now())
+        || !invitation.getEmail().equals(user.getEmail().trim().toLowerCase(Locale.ROOT));
+  }
+
+  private static BadRequestException invalidInvitation() {
+    return new BadRequestException(Json.map(
+        "statusCode", 400,
+        "message", "Invalid or expired invitation"));
   }
 }

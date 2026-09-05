@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 public interface ProjectInvitationRepository extends JpaRepository<ProjectInvitation, String> {
   Optional<ProjectInvitation> findByIdAndProjectId(String id, String projectId);
 
+  Optional<ProjectInvitation> findByTokenHash(String tokenHash);
+
   @Query("select i from ProjectInvitation i where i.projectId = :projectId and i.email = :email "
       + "and i.acceptedAt is null and i.revokedAt is null and i.expiresAt > :now")
   Optional<ProjectInvitation> findPendingByProjectIdAndEmail(

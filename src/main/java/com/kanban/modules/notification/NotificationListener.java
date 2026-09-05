@@ -4,6 +4,7 @@ import com.kanban.modules.notification.NotificationService.NewNotification;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
 import com.kanban.modules.notification.events.CommentCreatedEvent;
 import com.kanban.modules.notification.events.CommentMentionedEvent;
+import com.kanban.modules.notification.events.ProjectInvitedEvent;
 import com.kanban.modules.notification.events.TaskAssignedEvent;
 import com.kanban.modules.notification.events.TaskUpdatedEvent;
 import java.util.ArrayList;
@@ -46,6 +47,12 @@ public class NotificationListener {
   @EventListener
   public void handleTaskUpdated(TaskUpdatedEvent event) {
     handle(event, NotificationType.TASK_UPDATED, "task.updated");
+  }
+
+  @Async("eventExecutor")
+  @EventListener
+  public void handleProjectInvited(ProjectInvitedEvent event) {
+    handle(event, NotificationType.PROJECT_INVITED, "project.invited");
   }
 
   private void handle(BaseNotificationEvent event, NotificationType type, String eventName) {

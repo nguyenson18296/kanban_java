@@ -7,7 +7,8 @@ public enum NotificationType implements WireEnum {
   COMMENT_CREATED("comment_created"),
   COMMENT_MENTIONED("comment_mentioned"),
   TASK_ASSIGNED("task_assigned"),
-  TASK_UPDATED("task_updated");
+  TASK_UPDATED("task_updated"),
+  PROJECT_INVITED("project_invited");
 
   private final String value;
 
