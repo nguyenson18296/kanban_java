@@ -4,23 +4,18 @@ import com.kanban.common.events.EventBus;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Test double for EventEmitter2: records every emit so tests can query {@code emittedOf(name)}. */
+/** Test double for the type-based {@link EventBus}: records every emitted event so tests can query by class. */
 public class RecordingEventBus implements EventBus {
-  public record Emitted(String name, Object payload) {}
-
-  public final List<Emitted> events = new ArrayList<>();
+  public final List<Object> events = new ArrayList<>();
 
   @Override
-  public void emit(String eventName, Object payload) {
-    events.add(new Emitted(eventName, payload));
+  public void emit(Object event) {
+    events.add(event);
   }
 
-  public List<Object> emittedOf(String name) {
-    return events.stream().filter(e -> e.name().equals(name)).map(Emitted::payload).toList();
-  }
-
-  public boolean wasEmitted(String name, Object payload) {
-    return events.stream().anyMatch(e -> e.name().equals(name) && e.payload().equals(payload));
+  /** Every recorded event assignable to {@code eventType}, in emit order. */
+  public <T> List<T> emittedOf(Class<T> eventType) {
+    return events.stream().filter(eventType::isInstance).map(eventType::cast).toList();
   }
 
   public void clear() {

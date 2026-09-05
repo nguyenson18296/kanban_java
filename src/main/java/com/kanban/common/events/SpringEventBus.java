@@ -12,7 +12,7 @@ public class SpringEventBus implements EventBus {
   }
 
   @Override
-  public void emit(String eventName, Object payload) {
-    publisher.publishEvent(payload);
+  public void emit(Object event) {
+    publisher.publishEvent(event);
   }
 }

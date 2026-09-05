@@ -10,7 +10,8 @@ import static org.mockito.Mockito.when;
 import com.kanban.modules.comment.dto.CreateCommentDto;
 import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
-import com.kanban.modules.notification.events.NotificationEvents;
+import com.kanban.modules.notification.events.CommentCreatedEvent;
+import com.kanban.modules.notification.events.CommentMentionedEvent;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.Task;
@@ -33,8 +34,8 @@ class CommentServiceTest {
   private MentionService mention;
   private CommentService service;
 
-  private List<String> recipientsOf(String eventName) {
-    return ((BaseNotificationEvent) events.emittedOf(eventName).get(0)).recipient_ids();
+  private List<String> recipientsOf(Class<? extends BaseNotificationEvent> type) {
+    return events.emittedOf(type).get(0).recipient_ids();
   }
 
   @BeforeEach
@@ -76,11 +77,11 @@ class CommentServiceTest {
     // mentioned users auto-subscribed as MENTIONED
     verify(subscription).subscribeMany("t1", List.of("m1"), SubscriptionSource.MENTIONED);
     // COMMENT_CREATED goes to subscribers minus author minus mentioned
-    assertThat(events.emittedOf(NotificationEvents.COMMENT_CREATED)).hasSize(1);
-    assertThat(recipientsOf(NotificationEvents.COMMENT_CREATED)).containsExactly("s1", "s2");
+    assertThat(events.emittedOf(CommentCreatedEvent.class)).hasSize(1);
+    assertThat(recipientsOf(CommentCreatedEvent.class)).containsExactly("s1", "s2");
     // COMMENT_MENTIONED goes to mentioned users only
-    assertThat(events.emittedOf(NotificationEvents.COMMENT_MENTIONED)).hasSize(1);
-    assertThat(recipientsOf(NotificationEvents.COMMENT_MENTIONED)).containsExactly("m1");
+    assertThat(events.emittedOf(CommentMentionedEvent.class)).hasSize(1);
+    assertThat(recipientsOf(CommentMentionedEvent.class)).containsExactly("m1");
   }
 
   @Test
@@ -91,8 +92,8 @@ class CommentServiceTest {
 
     service.create("t1", "author", new CreateCommentDto("solo note"));
 
-    assertThat(events.emittedOf(NotificationEvents.COMMENT_CREATED)).isEmpty();
-    assertThat(events.emittedOf(NotificationEvents.COMMENT_MENTIONED)).isEmpty();
+    assertThat(events.emittedOf(CommentCreatedEvent.class)).isEmpty();
+    assertThat(events.emittedOf(CommentMentionedEvent.class)).isEmpty();
   }
 
   @Test
@@ -106,8 +107,8 @@ class CommentServiceTest {
     // Comment is returned successfully — no 500 despite the mention failure.
     assertThat(result.getId()).isEqualTo("c1");
     // No mention notification, but the comment fan-out to subscribers still runs.
-    assertThat(events.emittedOf(NotificationEvents.COMMENT_MENTIONED)).isEmpty();
-    assertThat(events.emittedOf(NotificationEvents.COMMENT_CREATED)).hasSize(1);
-    assertThat(recipientsOf(NotificationEvents.COMMENT_CREATED)).containsExactly("s1");
+    assertThat(events.emittedOf(CommentMentionedEvent.class)).isEmpty();
+    assertThat(events.emittedOf(CommentCreatedEvent.class)).hasSize(1);
+    assertThat(recipientsOf(CommentCreatedEvent.class)).containsExactly("s1");
   }
 }

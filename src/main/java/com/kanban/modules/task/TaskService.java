@@ -9,7 +9,6 @@ import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
 import com.kanban.common.util.Dates;
 import com.kanban.common.util.PgErrors;
-import com.kanban.modules.activity.events.ActivityEvents;
 import com.kanban.modules.activity.events.TaskActivityAction;
 import com.kanban.modules.activity.events.TaskActivityEvent;
 import com.kanban.modules.kanbancolumn.KanbanColumn;
@@ -17,7 +16,6 @@ import com.kanban.modules.kanbancolumn.KanbanColumnRepository;
 import com.kanban.modules.label.Label;
 import com.kanban.modules.label.LabelRepository;
 import com.kanban.modules.mention.MentionService;
-import com.kanban.modules.notification.events.NotificationEvents;
 import com.kanban.modules.notification.events.TaskAssignedEvent;
 import com.kanban.modules.notification.events.TaskUpdatedEvent;
 import com.kanban.modules.subscription.SubscriptionService;
@@ -129,7 +127,7 @@ public class TaskService {
       if (assigneeIds != null && !assigneeIds.isEmpty()) {
         subscriptionService.subscribeMany(saved.getId(), assigneeIds, SubscriptionSource.ASSIGNED);
         if (actorId != null) {
-          eventBus.emit(NotificationEvents.TASK_ASSIGNED, new TaskAssignedEvent(actorId, saved.getId(), assigneeIds,
+          eventBus.emit(new TaskAssignedEvent(actorId, saved.getId(), assigneeIds,
               Json.map("task_id", saved.getId(), "task_title", result.getTitle(), "ticket_id", result.getTicketId())));
         }
       }
@@ -137,8 +135,7 @@ public class TaskService {
         subscribeDescriptionMentions(saved.getId(), dto.description, actorId != null ? List.of(actorId) : List.of());
       }
       if (actorId != null) {
-        eventBus.emit(ActivityEvents.TASK_CREATED,
-            new TaskActivityEvent(actorId, saved.getId(), TaskActivityAction.TASK_CREATED));
+        eventBus.emit(new TaskActivityEvent(actorId, saved.getId(), TaskActivityAction.TASK_CREATED));
       }
       return result;
     } catch (NotFoundException | BadRequestException e) {
@@ -268,7 +265,7 @@ public class TaskService {
               .filter(uid -> !previousAssigneeIds.contains(uid)).toList();
           if (!addedIds.isEmpty()) {
             subscriptionService.subscribeMany(task.getId(), addedIds, SubscriptionSource.ASSIGNED);
-            eventBus.emit(NotificationEvents.TASK_ASSIGNED, new TaskAssignedEvent(actorId, task.getId(), addedIds,
+            eventBus.emit(new TaskAssignedEvent(actorId, task.getId(), addedIds,
                 Json.map("task_id", task.getId(), "task_title", updated.getTitle(), "ticket_id", updated.getTicketId())));
           }
         }
@@ -280,7 +277,7 @@ public class TaskService {
           List<String> subscriberIds = subscriptionService.getSubscriberIds(task.getId());
           List<String> recipients = subscriberIds.stream().filter(uid -> !uid.equals(actorId)).toList();
           if (!recipients.isEmpty()) {
-            eventBus.emit(NotificationEvents.TASK_UPDATED, new TaskUpdatedEvent(actorId, task.getId(), recipients,
+            eventBus.emit(new TaskUpdatedEvent(actorId, task.getId(), recipients,
                 Json.map(
                     "task_id", task.getId(),
                     "task_title", updated.getTitle(),
@@ -392,7 +389,7 @@ public class TaskService {
         List<String> newIds = newUsers.stream().map(User::getId).toList();
         subscriptionService.subscribeMany(taskId, newIds, SubscriptionSource.ASSIGNED);
         if (actorId != null) {
-          eventBus.emit(NotificationEvents.TASK_ASSIGNED, new TaskAssignedEvent(actorId, taskId, newIds,
+          eventBus.emit(new TaskAssignedEvent(actorId, taskId, newIds,
               Json.map("task_id", taskId, "task_title", result.getTitle(), "ticket_id", result.getTicketId())));
         }
       }
@@ -646,7 +643,7 @@ public class TaskService {
   }
 
   private void emitActivity(String actorId, String taskId, TaskActivityAction action, Map<String, Object> payload) {
-    eventBus.emit(ActivityEvents.nameOf(action), new TaskActivityEvent(actorId, taskId, action, payload));
+    eventBus.emit(new TaskActivityEvent(actorId, taskId, action, payload));
   }
 
   private static List<Object> usersPayload(List<User> users) {

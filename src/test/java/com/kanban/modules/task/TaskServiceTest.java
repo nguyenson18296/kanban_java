@@ -13,7 +13,8 @@ import com.kanban.modules.kanbancolumn.KanbanColumnRepository;
 import com.kanban.modules.label.LabelRepository;
 import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
-import com.kanban.modules.notification.events.NotificationEvents;
+import com.kanban.modules.notification.events.TaskAssignedEvent;
+import com.kanban.modules.notification.events.TaskUpdatedEvent;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.dto.CreateTaskDto;
@@ -55,8 +56,8 @@ class TaskServiceTest {
     return t;
   }
 
-  private List<String> recipientsOf(String eventName, int index) {
-    return ((BaseNotificationEvent) events.emittedOf(eventName).get(index)).recipient_ids();
+  private List<String> recipientsOf(Class<? extends BaseNotificationEvent> type, int index) {
+    return events.emittedOf(type).get(index).recipient_ids();
   }
 
   @BeforeEach
@@ -99,8 +100,8 @@ class TaskServiceTest {
 
       verify(subscription).subscribe("t1", "actor", SubscriptionSource.CREATED);
       verify(subscription).subscribeMany("t1", List.of("u1", "u2"), SubscriptionSource.ASSIGNED);
-      assertThat(events.emittedOf(NotificationEvents.TASK_ASSIGNED)).hasSize(1);
-      assertThat(recipientsOf(NotificationEvents.TASK_ASSIGNED, 0)).containsExactly("u1", "u2");
+      assertThat(events.emittedOf(TaskAssignedEvent.class)).hasSize(1);
+      assertThat(recipientsOf(TaskAssignedEvent.class, 0)).containsExactly("u1", "u2");
     }
   }
 
@@ -125,8 +126,8 @@ class TaskServiceTest {
       dto.with("status");
       service.update("t1", dto, "actor");
 
-      assertThat(events.emittedOf(NotificationEvents.TASK_UPDATED)).hasSize(1);
-      assertThat(recipientsOf(NotificationEvents.TASK_UPDATED, 0)).containsExactly("creator", "watcher");
+      assertThat(events.emittedOf(TaskUpdatedEvent.class)).hasSize(1);
+      assertThat(recipientsOf(TaskUpdatedEvent.class, 0)).containsExactly("creator", "watcher");
     }
 
     @Test
@@ -140,7 +141,7 @@ class TaskServiceTest {
       dto.with("title");
       service.update("t1", dto, "actor");
 
-      assertThat(events.emittedOf(NotificationEvents.TASK_UPDATED)).isEmpty();
+      assertThat(events.emittedOf(TaskUpdatedEvent.class)).isEmpty();
     }
   }
 
@@ -155,8 +156,8 @@ class TaskServiceTest {
       service.addAssignees("t1", List.of("u1"), "actor");
 
       verify(subscription).subscribeMany("t1", List.of("u1"), SubscriptionSource.ASSIGNED);
-      assertThat(events.emittedOf(NotificationEvents.TASK_ASSIGNED)).hasSize(1);
-      assertThat(recipientsOf(NotificationEvents.TASK_ASSIGNED, 0)).containsExactly("u1");
+      assertThat(events.emittedOf(TaskAssignedEvent.class)).hasSize(1);
+      assertThat(recipientsOf(TaskAssignedEvent.class, 0)).containsExactly("u1");
     }
 
     @Test
@@ -168,7 +169,7 @@ class TaskServiceTest {
       service.addAssignees("t1", List.of("u1"), null);
 
       verify(subscription).subscribeMany("t1", List.of("u1"), SubscriptionSource.ASSIGNED);
-      assertThat(events.emittedOf(NotificationEvents.TASK_ASSIGNED)).isEmpty();
+      assertThat(events.emittedOf(TaskAssignedEvent.class)).isEmpty();
     }
   }
 

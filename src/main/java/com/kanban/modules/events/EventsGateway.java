@@ -5,7 +5,6 @@ import com.kanban.common.json.Json;
 import com.kanban.modules.events.guards.WsJwtGuard;
 import com.kanban.modules.events.socket.SocketClient;
 import com.kanban.modules.events.socket.SocketServer;
-import com.kanban.modules.presence.events.PresenceEvents;
 import com.kanban.modules.presence.events.WsConnectionClosedEvent;
 import com.kanban.modules.presence.events.WsConnectionOpenedEvent;
 import com.kanban.modules.user.User;
@@ -52,7 +51,7 @@ public class EventsGateway {
       client.join("user:" + userId);
       client.emit("connection:established", Json.map("userId", userId));
       log.info("Client connected: {} (user: {})", client.getId(), userId);
-      eventBus.emit(PresenceEvents.WS_CONNECTION_OPENED, new WsConnectionOpenedEvent(userId, client.getId()));
+      eventBus.emit(new WsConnectionOpenedEvent(userId, client.getId()));
     } catch (RuntimeException e) {
       client.emit("connection:error", Json.map("message", "Authentication failed"));
       client.disconnect(true);
@@ -64,7 +63,7 @@ public class EventsGateway {
     String userId = user instanceof User u ? u.getId() : null;
     log.info("Client disconnected: {} (user: {})", client.getId(), userId == null ? "unknown" : userId);
     if (userId != null) {
-      eventBus.emit(PresenceEvents.WS_CONNECTION_CLOSED, new WsConnectionClosedEvent(userId, client.getId()));
+      eventBus.emit(new WsConnectionClosedEvent(userId, client.getId()));
     }
   }
 

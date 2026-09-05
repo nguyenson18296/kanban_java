@@ -9,7 +9,6 @@ import static org.mockito.Mockito.when;
 import com.kanban.common.json.Json;
 import com.kanban.modules.events.guards.WsJwtGuard;
 import com.kanban.modules.events.socket.SocketServer;
-import com.kanban.modules.presence.events.PresenceEvents;
 import com.kanban.modules.presence.events.WsConnectionClosedEvent;
 import com.kanban.modules.presence.events.WsConnectionOpenedEvent;
 import com.kanban.modules.user.User;
@@ -83,8 +82,8 @@ class EventsGatewayTest {
 
       gateway.handleConnection(client);
 
-      assertThat(events.wasEmitted(PresenceEvents.WS_CONNECTION_OPENED,
-          new WsConnectionOpenedEvent("user-1", "socket-1"))).isTrue();
+      assertThat(events.emittedOf(WsConnectionOpenedEvent.class))
+          .containsExactly(new WsConnectionOpenedEvent("user-1", "socket-1"));
     }
 
     @Test
@@ -95,7 +94,7 @@ class EventsGatewayTest {
 
       gateway.handleConnection(client);
 
-      assertThat(events.emittedOf(PresenceEvents.WS_CONNECTION_OPENED)).isEmpty();
+      assertThat(events.emittedOf(WsConnectionOpenedEvent.class)).isEmpty();
     }
   }
 
@@ -122,8 +121,8 @@ class EventsGatewayTest {
       FakeSocketClient client = new FakeSocketClient("socket-1", null);
       client.data().put("user", mockUser);
       gateway.handleDisconnect(client);
-      assertThat(events.wasEmitted(PresenceEvents.WS_CONNECTION_CLOSED,
-          new WsConnectionClosedEvent("user-1", "socket-1"))).isTrue();
+      assertThat(events.emittedOf(WsConnectionClosedEvent.class))
+          .containsExactly(new WsConnectionClosedEvent("user-1", "socket-1"));
     }
 
     @Test
@@ -131,7 +130,7 @@ class EventsGatewayTest {
     void noClosedWhenUnknown() {
       FakeSocketClient client = new FakeSocketClient("socket-1", null);
       gateway.handleDisconnect(client);
-      assertThat(events.emittedOf(PresenceEvents.WS_CONNECTION_CLOSED)).isEmpty();
+      assertThat(events.emittedOf(WsConnectionClosedEvent.class)).isEmpty();
     }
   }
 

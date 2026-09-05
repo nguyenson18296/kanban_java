@@ -1,6 +1,6 @@
 package com.kanban.common.events;
 
-/** Port of Nest's {@code EventEmitter2.emit(name, payload)}; listeners subscribe by payload type. */
+/** Type-based event dispatch: listeners subscribe by the payload's type via Spring {@code @EventListener}. */
 public interface EventBus {
-  void emit(String eventName, Object payload);
+  void emit(Object event);
 }

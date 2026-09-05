@@ -16,7 +16,6 @@ import com.kanban.modules.comment.dto.UpdateCommentDto;
 import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.CommentCreatedEvent;
 import com.kanban.modules.notification.events.CommentMentionedEvent;
-import com.kanban.modules.notification.events.NotificationEvents;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.Task;
@@ -86,7 +85,7 @@ public class CommentService {
       List<String> commentRecipients = subscriberIds.stream()
           .filter(id -> !id.equals(authorId) && !mentionedSet.contains(id)).toList();
       if (!commentRecipients.isEmpty()) {
-        eventBus.emit(NotificationEvents.COMMENT_CREATED, new CommentCreatedEvent(authorId, taskId, commentRecipients,
+        eventBus.emit(new CommentCreatedEvent(authorId, taskId, commentRecipients,
             Json.map(
                 "task_id", taskId,
                 "task_title", task.getTitle(),
@@ -99,7 +98,7 @@ public class CommentService {
                     "avatar_url", result.getAuthor().getAvatarUrl()))));
       }
       if (!mentionedUserIds.isEmpty()) {
-        eventBus.emit(NotificationEvents.COMMENT_MENTIONED, new CommentMentionedEvent(authorId, saved.getId(),
+        eventBus.emit(new CommentMentionedEvent(authorId, saved.getId(),
             mentionedUserIds, Json.map(
                 "task_id", taskId,
                 "task_title", task.getTitle(),
