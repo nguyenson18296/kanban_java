@@ -5,7 +5,9 @@ import com.kanban.common.pipes.Param;
 import com.kanban.common.validation.ValidatedBody;
 import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.guards.JwtAuth;
+import com.kanban.modules.invitation.dto.AcceptInvitationDto;
 import com.kanban.modules.invitation.dto.CreateInvitationDto;
+import com.kanban.modules.user.User;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -16,13 +18,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "Project Invitations")
 @RestController
-@RequestMapping("/projects/{projectId}/invitations")
 public class InvitationController {
   private final InvitationService invitationService;
 
@@ -30,7 +30,7 @@ public class InvitationController {
     this.invitationService = invitationService;
   }
 
-  @PostMapping
+  @PostMapping("/projects/{projectId}/invitations")
   @ResponseStatus(HttpStatus.CREATED)
   @JwtAuth
   @SecurityRequirement(name = "bearer")
@@ -46,7 +46,7 @@ public class InvitationController {
     return invitationService.create(projectId, dto, actorId);
   }
 
-  @GetMapping
+  @GetMapping("/projects/{projectId}/invitations")
   @JwtAuth
   @SecurityRequirement(name = "bearer")
   @Operation(summary = "List pending invitations (admin+)")
@@ -60,7 +60,7 @@ public class InvitationController {
     return invitationService.findPending(projectId, actorId);
   }
 
-  @DeleteMapping("/{invitationId}")
+  @DeleteMapping("/projects/{projectId}/invitations/{invitationId}")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   @JwtAuth
   @SecurityRequirement(name = "bearer")
@@ -74,5 +74,17 @@ public class InvitationController {
       @Param(value = "invitationId", pipe = Param.Pipe.UUID) String invitationId,
       @CurrentUser("id") String actorId) {
     invitationService.revoke(projectId, invitationId, actorId);
+  }
+
+  @PostMapping("/invitations/accept")
+  @ResponseStatus(HttpStatus.OK)
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @Operation(summary = "Accept an invitation by token (must be logged in as the invited email)")
+  @ApiResponse(responseCode = "200", description = "Joined the project; returns the project")
+  @ApiResponse(responseCode = "400", description = "Invalid or expired invitation")
+  @ApiResponse(responseCode = "409", description = "Already a member")
+  public Map<String, Object> accept(@ValidatedBody AcceptInvitationDto dto, @CurrentUser User user) {
+    return invitationService.accept(dto.token, user).toJson(true);
   }
 }

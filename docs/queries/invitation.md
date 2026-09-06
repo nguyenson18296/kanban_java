@@ -1,9 +1,9 @@
 # Project invitations — raw PostgreSQL queries
 
-Queries executed by `modules/invitation` (RBAC Task 8: create / list pending / revoke):
-`InvitationService`, `ProjectInvitationRepository`, plus the user lookup it borrows from
-`UserRepository`. The accept flow (token lookup, membership insert) is RBAC Task 9 — add
-its queries here when it lands.
+Queries executed by `modules/invitation` (RBAC Tasks 8–9: create / list pending / revoke /
+accept): `InvitationService`, `ProjectInvitationRepository`, plus the lookups it borrows
+from `UserRepository`, `ProjectMemberRepository` and `ProjectRepository` (via
+`ProjectService.findOneById`).
 
 **How to read this file**
 
@@ -18,9 +18,11 @@ its queries here when it lands.
   Indexes: `idx_project_invitations_token_hash` (unique), `idx_project_invitations_project_id`,
   `idx_project_invitations_email`.
 - "Pending" always means `accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`.
-- Every endpoint runs the membership gate first — query **#1 of
+- Every project-scoped endpoint runs the membership gate first — query **#1 of
   [project.md](project.md)** (`project_members` PK lookup via `ProjectAccessService.ensureRole`);
   non-members get the masked project 404, so no separate `projects` existence check runs.
+  `POST /invitations/accept` is the exception: the token itself is the credential, so it
+  starts at the token-hash lookup (**#7**) instead of a role gate.
 
 ## Index
 
@@ -32,6 +34,11 @@ its queries here when it lands.
 | 4 | Pending invitations of a project + inviter | `ProjectInvitationRepository.findPendingByProjectId` | `GET /projects/{id}/invitations` |
 | 5 | Revoke if still pending | `ProjectInvitationRepository.revokePending` | `DELETE /projects/{id}/invitations/{invitationId}` |
 | 6 | Invitation by id + project | `ProjectInvitationRepository.findByIdAndProjectId` | `DELETE /projects/{id}/invitations/{invitationId}` (only when #5 matched no row) |
+| 7 | Invitation by token hash | `ProjectInvitationRepository.findByTokenHash` | `POST /invitations/accept` |
+| 8 | Insert membership | `ProjectMemberRepository.save` | `POST /invitations/accept` |
+| 9 | Mark invitation accepted | `ProjectInvitationRepository.save` on the managed row | `POST /invitations/accept` |
+| 10 | Project + creator | `ProjectRepository.findByIdWithCreator` (via `ProjectService.findOneById`) | `POST /invitations/accept` (response); `POST /projects/{id}/invitations` (notification payload, invitee has an account) |
+| 11 | User by id | `UserRepository.findById` | `POST /projects/{id}/invitations` (inviter in the notification payload, invitee has an account) |
 
 ## Queries
 
@@ -149,6 +156,81 @@ WHERE id         = :id
   AND project_id = :projectId;
 ```
 
+### 7. Invitation by token hash
+
+`ProjectInvitationRepository.findByTokenHash(tokenHash)` — derived query. The entry point of
+`InvitationService.accept`: the raw token from the request body is sha256-hashed in the
+service and looked up on the unique `idx_project_invitations_token_hash`. A miss — and every
+other invalid condition checked in Java afterwards (expired, revoked, already accepted,
+email ≠ the logged-in user's) — throws the same generic 400, so the endpoint is not an
+oracle for token validity or invitee emails.
+
+```sql
+SELECT id, project_id, email, role, token_hash, invited_by, expires_at,
+       accepted_at, accepted_by, revoked_at, created_at
+FROM project_invitations
+WHERE token_hash = :tokenHash;
+
+-- :tokenHash = sha256 hex of the raw token (64 chars)
+```
+
+### 8. Insert membership (accept)
+
+`InvitationService.accept` → `memberRepository.save(new ProjectMember(projectId, userId, role))`,
+inside the method's `@Transactional`. Same statement as project.md **#7**, and the same
+performance note applies: `ProjectMember`'s assigned composite id makes `save` go through
+`em.merge`, so Hibernate runs the project.md **#1** SELECT before this INSERT.
+
+```sql
+INSERT INTO project_members (project_id, user_id, role, joined_at)
+VALUES (:projectId, :userId, :role, now());
+
+-- :role = the invitation's role ('admin' | 'member' | 'viewer')
+```
+
+### 9. Mark invitation accepted
+
+`InvitationService.accept` → `invitationRepository.save(invitation)` on the row loaded by
+**#7**. Unlike revoke's detached case (#5/#6), the entity stays managed inside `accept`'s
+`@Transactional`, so there is no extra merge SELECT — the dirty check at commit emits one
+UPDATE. Committed atomically with **#8**: the membership insert and the accepted mark
+succeed or roll back together.
+
+```sql
+UPDATE project_invitations
+SET accepted_at = :acceptedAt,
+    accepted_by = :userId
+WHERE id = :id;
+
+-- :acceptedAt = now(), :userId = the accepting user's uuid
+```
+
+### 10. Project + creator
+
+`ProjectRepository.findByIdWithCreator(id)` (project CRUD, via `ProjectService.findOneById`)
+— JPQL with `@EntityGraph("creator")`. `accept` returns it as the response body
+(`toJson(true)` embeds the creator); `create` fetches it for the notification payload's
+`project_name` when the invitee already has an account. Unknown id → the project-flavored
+404 (cannot happen from these callers: the FK guarantees the project exists).
+
+```sql
+SELECT p.*, u.*
+FROM projects p
+LEFT JOIN users u ON u.id = p.created_by
+WHERE p.id = :id;
+```
+
+### 11. User by id
+
+`UserRepository.findById(actorId)` — PK lookup. Fetches the inviter for the notification
+payload (`inviter: { id, full_name, avatar_url }`) when the invitee has an account.
+
+```sql
+SELECT id, email, full_name, password_hash, role, avatar_url, is_active, created_at, updated_at
+FROM users
+WHERE id = :id;
+```
+
 ## Endpoint query sequences
 
 What actually hits the database per request, in order. `project#1` = the membership gate
@@ -156,8 +238,13 @@ What actually hits the database per request, in order. `project#1` = the members
 
 | Endpoint | Queries, in order |
 |---|---|
-| `POST /projects/{id}/invitations` 🔒 | `project#1` (gate: `admin`, or `owner` when inviting an `admin`) → **#1** → `project#1` (invitee membership; only when #1 found a user) → **#2** → **#3** |
+| `POST /projects/{id}/invitations` 🔒 | `project#1` (gate: `admin`, or `owner` when inviting an `admin`) → **#1** → `project#1` (invitee membership; only when #1 found a user) → **#2** → **#3** → **#10** + **#11** (notification payload; only when #1 found a user) |
 | `GET /projects/{id}/invitations` 🔒 | `project#1` (gate, `admin`) → **#4** |
 | `DELETE /projects/{id}/invitations/{invitationId}` 🔒 | `project#1` (gate, `admin`) → **#5**; **#6** only when #5 affected 0 rows (success is a single UPDATE) |
+| `POST /invitations/accept` 🔒 | one transaction: **#7** → `project#1` (already-member check) → **#8** (merge SELECT + INSERT) → **#10** (response) → **#9** (UPDATE at commit) |
 
 🔒 = `@JwtAuth`.
+
+The `PROJECT_INVITED` emit in `create` is fire-and-forget: the async listeners run after the
+request, `NotificationListener` inserting the notification row (notification module) and
+`EventsService` pushing the Socket.IO event (no DB).

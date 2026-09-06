@@ -5,6 +5,7 @@ import com.kanban.common.util.Dates;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
 import com.kanban.modules.notification.events.CommentCreatedEvent;
 import com.kanban.modules.notification.events.CommentMentionedEvent;
+import com.kanban.modules.notification.events.ProjectInvitedEvent;
 import com.kanban.modules.notification.events.TaskAssignedEvent;
 import com.kanban.modules.notification.events.TaskUpdatedEvent;
 import java.time.Instant;
@@ -49,6 +50,12 @@ public class EventsService {
   @EventListener
   public void handleTaskUpdated(TaskUpdatedEvent event) {
     emitToRecipients(event, "task_updated");
+  }
+
+  @Async("eventExecutor")
+  @EventListener
+  public void handleProjectInvited(ProjectInvitedEvent event) {
+    emitToRecipients(event, "project_invited");
   }
 
   private void emitToRecipients(BaseNotificationEvent event, String type) {

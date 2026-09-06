@@ -12,16 +12,22 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.kanban.common.api.ApiListResponse;
+import com.kanban.common.exception.BadRequestException;
 import com.kanban.common.exception.ConflictException;
 import com.kanban.common.exception.ForbiddenException;
 import com.kanban.common.exception.HttpException;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.modules.invitation.dto.CreateInvitationDto;
+import com.kanban.modules.notification.events.ProjectInvitedEvent;
+import com.kanban.modules.project.Project;
 import com.kanban.modules.project.ProjectAccessService;
 import com.kanban.modules.project.ProjectMember;
+import com.kanban.modules.project.ProjectMemberRepository;
 import com.kanban.modules.project.ProjectRole;
+import com.kanban.modules.project.ProjectService;
 import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserRepository;
+import com.kanban.testing.RecordingEventBus;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -34,11 +40,14 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-/** Port of invitation.service.spec.ts (Task 8: create / findPending / revoke). */
+/** Port of invitation.service.spec.ts (Task 8: create / findPending / revoke; Task 9: accept + notification emit). */
 class InvitationServiceTest {
   private ProjectInvitationRepository invitationRepository;
   private UserRepository userRepository;
   private ProjectAccessService projectAccessService;
+  private ProjectMemberRepository memberRepository;
+  private ProjectService projectService;
+  private RecordingEventBus eventBus;
   private InvitationService service;
 
   private static CreateInvitationDto dto(String email, ProjectRole role) {
@@ -70,7 +79,11 @@ class InvitationServiceTest {
     invitationRepository = mock(ProjectInvitationRepository.class);
     userRepository = mock(UserRepository.class);
     projectAccessService = mock(ProjectAccessService.class);
-    service = new InvitationService(invitationRepository, userRepository, projectAccessService);
+    memberRepository = mock(ProjectMemberRepository.class);
+    projectService = mock(ProjectService.class);
+    eventBus = new RecordingEventBus();
+    service = new InvitationService(invitationRepository, userRepository, projectAccessService, memberRepository,
+        projectService, eventBus);
 
     when(invitationRepository.saveAndFlush(any(ProjectInvitation.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -160,6 +173,56 @@ class InvitationServiceTest {
       assertThat(created.getTokenHash()).isEqualTo(sha256(token));
       assertThat(created.getEmail()).isEqualTo("a@b.com");
       assertThat(created.getTokenHash()).isNotEqualTo(token);
+    }
+
+    @Test
+    @DisplayName("emits PROJECT_INVITED when the invitee already has an account")
+    void emitsProjectInvitedWhenInviteeExists() {
+      when(projectAccessService.ensureRole(eq("proj1234"), eq("actor"), any()))
+          .thenReturn(new ProjectMember("proj1234", "actor", ProjectRole.ADMIN));
+      User invitee = new User("invitee", "a@b.com", "Invitee", null, null, true);
+      when(userRepository.findByEmail(anyString())).thenReturn(Optional.of(invitee));
+      when(projectAccessService.getMembership("proj1234", "invitee")).thenReturn(null);
+      when(invitationRepository.findPendingByProjectIdAndEmail(anyString(), anyString(), any(Instant.class)))
+          .thenReturn(Optional.empty());
+      User inviter = new User("actor", "actor@b.com", "Actor Name", null, "http://avatar", true);
+      when(userRepository.findById("actor")).thenReturn(Optional.of(inviter));
+      Project project = new Project();
+      project.setId("proj1234");
+      project.setName("Project One");
+      when(projectService.findOneById("proj1234")).thenReturn(project);
+
+      service.create("proj1234", dto("a@b.com", null), "actor");
+
+      assertThat(eventBus.emittedOf(ProjectInvitedEvent.class)).hasSize(1);
+      ProjectInvitedEvent event = eventBus.emittedOf(ProjectInvitedEvent.class).get(0);
+      assertThat(event.actor_id()).isEqualTo("actor");
+      assertThat(event.entity_type()).isEqualTo("project_invitation");
+      assertThat(event.recipient_ids()).containsExactly("invitee");
+      assertThat(event.payload())
+          .containsEntry("project_id", "proj1234")
+          .containsEntry("project_name", "Project One")
+          .containsEntry("role", ProjectRole.MEMBER);
+      @SuppressWarnings("unchecked")
+      Map<String, Object> inviterJson = (Map<String, Object>) event.payload().get("inviter");
+      assertThat(inviterJson)
+          .containsEntry("id", "actor")
+          .containsEntry("full_name", "Actor Name")
+          .containsEntry("avatar_url", "http://avatar");
+    }
+
+    @Test
+    @DisplayName("does not emit PROJECT_INVITED when the invitee has no account")
+    void doesNotEmitProjectInvitedWhenInviteeMissing() {
+      when(projectAccessService.ensureRole(eq("proj1234"), eq("actor"), any()))
+          .thenReturn(new ProjectMember("proj1234", "actor", ProjectRole.ADMIN));
+      when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+      when(invitationRepository.findPendingByProjectIdAndEmail(anyString(), anyString(), any(Instant.class)))
+          .thenReturn(Optional.empty());
+
+      service.create("proj1234", dto("a@b.com", null), "actor");
+
+      assertThat(eventBus.emittedOf(ProjectInvitedEvent.class)).isEmpty();
     }
   }
 
@@ -297,6 +360,130 @@ class InvitationServiceTest {
       service.revoke("proj1234", "inv-uuid", "actor");
 
       verify(invitationRepository, never()).save(any(ProjectInvitation.class));
+    }
+  }
+
+  @Nested
+  class Accept {
+    private static final String RAW_TOKEN = "a".repeat(64);
+    private final User jane = new User("jane-id", "Jane@Example.com", "Jane", null, null, true);
+
+    private ProjectInvitation validInvitation() {
+      ProjectInvitation invitation = new ProjectInvitation();
+      invitation.setId("inv-uuid");
+      invitation.setProjectId("proj1234");
+      invitation.setEmail("jane@example.com");
+      invitation.setRole(ProjectRole.MEMBER);
+      invitation.setExpiresAt(Instant.now().plusSeconds(60));
+      invitation.setAcceptedAt(null);
+      invitation.setRevokedAt(null);
+      return invitation;
+    }
+
+    @Test
+    @DisplayName("rejects an unknown token with the generic 400")
+    void rejectsUnknownToken() {
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
+
+      assertThatThrownBy(() -> service.accept(RAW_TOKEN, jane))
+          .isInstanceOf(BadRequestException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 400)
+              .containsEntry("message", "Invalid or expired invitation"));
+    }
+
+    @Test
+    @DisplayName("rejects an expired invitation")
+    void rejectsExpiredInvitation() {
+      ProjectInvitation invitation = validInvitation();
+      invitation.setExpiresAt(Instant.now().minusMillis(1));
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.of(invitation));
+
+      assertThatThrownBy(() -> service.accept(RAW_TOKEN, jane))
+          .isInstanceOf(BadRequestException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 400)
+              .containsEntry("message", "Invalid or expired invitation"));
+    }
+
+    @Test
+    @DisplayName("rejects a revoked invitation")
+    void rejectsRevokedInvitation() {
+      ProjectInvitation invitation = validInvitation();
+      invitation.setRevokedAt(Instant.now());
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.of(invitation));
+
+      assertThatThrownBy(() -> service.accept(RAW_TOKEN, jane))
+          .isInstanceOf(BadRequestException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 400)
+              .containsEntry("message", "Invalid or expired invitation"));
+    }
+
+    @Test
+    @DisplayName("rejects reuse of an accepted invitation")
+    void rejectsAcceptedInvitation() {
+      ProjectInvitation invitation = validInvitation();
+      invitation.setAcceptedAt(Instant.now());
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.of(invitation));
+
+      assertThatThrownBy(() -> service.accept(RAW_TOKEN, jane))
+          .isInstanceOf(BadRequestException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 400)
+              .containsEntry("message", "Invalid or expired invitation"));
+    }
+
+    @Test
+    @DisplayName("rejects a user whose email does not match, with the same generic 400")
+    void rejectsEmailMismatch() {
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.of(validInvitation()));
+      User mallory = new User("mallory", "mallory@evil.com", "Mallory", null, null, true);
+
+      assertThatThrownBy(() -> service.accept(RAW_TOKEN, mallory))
+          .isInstanceOf(BadRequestException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 400)
+              .containsEntry("message", "Invalid or expired invitation"));
+    }
+
+    @Test
+    @DisplayName("409s when the accepting user is already a member")
+    void conflictsWhenAlreadyMember() {
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.of(validInvitation()));
+      when(projectAccessService.getMembership("proj1234", "jane-id"))
+          .thenReturn(new ProjectMember("proj1234", "jane-id", ProjectRole.MEMBER));
+
+      assertThatThrownBy(() -> service.accept(RAW_TOKEN, jane))
+          .isInstanceOf(ConflictException.class)
+          .satisfies(e -> assertThat(response(e))
+              .containsEntry("statusCode", 409)
+              .containsEntry("message", "You are already a member of this project"));
+    }
+
+    @Test
+    @DisplayName("looks the invitation up by sha256(token), creates the membership, marks accepted, returns the project")
+    void acceptsAndJoinsProject() {
+      ProjectInvitation invitation = validInvitation();
+      when(invitationRepository.findByTokenHash(anyString())).thenReturn(Optional.of(invitation));
+      when(projectAccessService.getMembership("proj1234", "jane-id")).thenReturn(null);
+      Project project = new Project();
+      project.setId("proj1234");
+      project.setName("P");
+      when(projectService.findOneById("proj1234")).thenReturn(project);
+
+      Project result = service.accept(RAW_TOKEN, jane);
+
+      verify(invitationRepository).findByTokenHash(sha256(RAW_TOKEN));
+      ArgumentCaptor<ProjectMember> memberCaptor = ArgumentCaptor.forClass(ProjectMember.class);
+      verify(memberRepository).save(memberCaptor.capture());
+      assertThat(memberCaptor.getValue().getProjectId()).isEqualTo("proj1234");
+      assertThat(memberCaptor.getValue().getUserId()).isEqualTo("jane-id");
+      assertThat(memberCaptor.getValue().getRole()).isEqualTo(ProjectRole.MEMBER);
+      assertThat(invitation.getAcceptedAt()).isNotNull();
+      assertThat(invitation.getAcceptedBy()).isEqualTo("jane-id");
+      verify(invitationRepository).save(invitation);
+      assertThat(result).isSameAs(project);
     }
   }
 }
