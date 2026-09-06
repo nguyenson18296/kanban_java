@@ -5,6 +5,7 @@ import com.kanban.common.pipes.Param;
 import com.kanban.common.validation.ValidatedBody;
 import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.guards.JwtAuth;
+import com.kanban.modules.project.guards.RequireProjectRole;
 import com.kanban.modules.project.dto.CreateProjectDto;
 import com.kanban.modules.project.dto.ManageProjectMembersDto;
 import com.kanban.modules.project.dto.UpdateMemberRoleDto;
@@ -47,25 +48,35 @@ public class ProjectController {
   }
 
   @GetMapping
-  @Operation(summary = "Get all projects")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @Operation(summary = "Get the projects the caller is a member of")
   @ApiResponse(responseCode = "200", description = "List of projects")
-  public List<Map<String, Object>> findAll() {
-    return projectService.findAll().stream().map(p -> p.toJson(true)).toList();
+  public List<Map<String, Object>> findAll(@CurrentUser("id") String userId) {
+    return projectService.findAll(userId).stream().map(p -> p.toJson(true)).toList();
   }
 
   @GetMapping("/{id}")
-  @Operation(summary = "Get a project by ID")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.VIEWER, param = "id")
+  @Operation(summary = "Get a project by ID (any project member)")
   @Parameter(name = "id", description = "Project ID")
   @ApiResponse(responseCode = "200", description = "Project found")
+  @ApiResponse(responseCode = "403", description = "Insufficient project role")
   @ApiResponse(responseCode = "404", description = "Project not found")
   public Map<String, Object> findOne(@Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id) {
     return projectService.findOneById(id).toJson(true);
   }
 
   @PatchMapping("/{id}")
-  @Operation(summary = "Update a project")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.ADMIN, param = "id")
+  @Operation(summary = "Update a project (admin+)")
   @Parameter(name = "id", description = "Project ID")
   @ApiResponse(responseCode = "200", description = "Project updated")
+  @ApiResponse(responseCode = "403", description = "Insufficient project role")
   @ApiResponse(responseCode = "404", description = "Project not found")
   @ApiResponse(responseCode = "409", description = "Project name already exists")
   public Map<String, Object> update(@Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id,
@@ -74,9 +85,13 @@ public class ProjectController {
   }
 
   @DeleteMapping("/{id}")
-  @Operation(summary = "Delete a project")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.OWNER, param = "id")
+  @Operation(summary = "Delete a project (owner only)")
   @Parameter(name = "id", description = "Project ID")
   @ApiResponse(responseCode = "200", description = "Project deleted")
+  @ApiResponse(responseCode = "403", description = "Insufficient project role")
   @ApiResponse(responseCode = "404", description = "Project not found")
   public void remove(@Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id) {
     projectService.remove(id);
@@ -85,9 +100,13 @@ public class ProjectController {
   // --- Project Members ---
 
   @GetMapping("/{id}/members")
-  @Operation(summary = "Get project members")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.VIEWER, param = "id")
+  @Operation(summary = "Get project members (any project member)")
   @Parameter(name = "id", description = "Project ID")
   @ApiResponse(responseCode = "200", description = "List of project members")
+  @ApiResponse(responseCode = "403", description = "Insufficient project role")
   @ApiResponse(responseCode = "404", description = "Project not found")
   public ApiListResponse<Map<String, Object>> getMembers(
       @Param(value = "id", pipe = Param.Pipe.PROJECT_ID) String id) {

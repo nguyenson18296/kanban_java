@@ -7,4 +7,6 @@ public interface KanbanColumnRepository extends JpaRepository<KanbanColumn, Inte
   List<KanbanColumn> findByIsArchivedFalseOrderByPositionAsc();
 
   List<KanbanColumn> findByIsArchivedFalseAndProjectIdOrderByPositionAsc(String projectId);
+
+  List<KanbanColumn> findByProjectIdInAndIsArchivedFalseOrderByPositionAsc(List<String> projectIds);
 }

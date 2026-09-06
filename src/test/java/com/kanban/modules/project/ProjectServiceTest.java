@@ -291,4 +291,25 @@ class ProjectServiceTest {
           .doesNotThrowAnyException();
     }
   }
+
+  @Nested
+  class FindAll {
+    @Test
+    @DisplayName("returns only the caller's projects, from their memberships")
+    void scopedToMemberships() {
+      Project p1 = new Project();
+      p1.setId("proj1234");
+      p1.setName("A");
+      Project p2 = new Project();
+      p2.setId("proj5678");
+      p2.setName("B");
+      ProjectMember m1 = member("u1", ProjectRole.OWNER);
+      m1.setProject(p1);
+      ProjectMember m2 = member("u1", ProjectRole.MEMBER);
+      m2.setProject(p2);
+      when(memberRepository.findByUserIdWithProjectOrderByJoinedAtDesc("u1")).thenReturn(List.of(m1, m2));
+
+      assertThat(service.findAll("u1")).containsExactly(p1, p2);
+    }
+  }
 }
