@@ -46,13 +46,16 @@ public class CommentController {
   }
 
   @GetMapping("/tasks/{taskId}/comments")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Get comments for a task (paginated)")
   @Parameter(name = "taskId", description = "Task UUID")
   @ApiResponse(responseCode = "200", description = "Paginated list of comments")
   @ApiResponse(responseCode = "404", description = "Task not found")
   public PaginatedResponse<Map<String, Object>> findByTask(
-      @Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId, @ValidatedQuery CommentQueryDto query) {
-    return commentService.findByTask(taskId, query);
+      @Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId, @ValidatedQuery CommentQueryDto query,
+      @CurrentUser("id") String userId) {
+    return commentService.findByTask(taskId, query, userId);
   }
 
   @PatchMapping("/comments/{id}")

@@ -20,13 +20,13 @@ create, update, delete, find) is not documented yet — add it here when those p
 |---|---|---|---|
 | 1 | Membership lookup by PK | `ProjectMemberRepository.findByProjectIdAndUserId` | every `ProjectAccessService.ensureRole` / `getMembership` call (see [Endpoint sequences](#endpoint-query-sequences)) |
 | 2 | Membership exists? | `ProjectMemberRepository.existsByProjectIdAndUserId` | `POST /projects/{projectId}/teams/{teamId}/members` |
-| 3 | Project ids of a user | `ProjectMemberRepository.findProjectIdsByUserId` | Socket.IO connect (presence rooms); `ProjectAccessService.getProjectIdsForUser` |
+| 3 | Project ids of a user | `ProjectMemberRepository.findProjectIdsByUserId` | Socket.IO connect (presence rooms); `ProjectAccessService.getProjectIdsForUser`; `GET /tasks` list scoping (JAV-20) |
 | 4 | Members of a project + user | `ProjectMemberRepository.findByProjectIdWithUserOrderByJoinedAtAsc` | `GET /projects/{id}/members` |
 | 5 | Projects of a user + project + creator | `ProjectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc` | `GET /projects`, `GET /users/me/projects`, `GET /users/{id}/projects` |
 | 6 | Existing memberships among candidates | `ProjectMemberRepository.findByProjectIdAndUserIdIn` | `POST /projects/{id}/members`, `DELETE /projects/{id}/members` (target roles) |
 | 7 | Insert membership | `ProjectMemberRepository.save` / `saveAll` | `POST /projects` (creator → owner), `POST /projects/{id}/members` |
 | 8 | Bulk delete memberships | `ProjectMemberRepository.deleteByProjectIdAndUserIdIn` | `DELETE /projects/{id}/members` |
-| 9 | Project id of a task | `JpaProjectAccessQueries.findProjectIdForTask` | `ProjectAccessService.ensureTaskRole` / `getProjectIdForTask` (no route wired yet — RBAC Task 11) |
+| 9 | Project id of a task | `JpaProjectAccessQueries.findProjectIdForTask` | `ProjectAccessService.ensureTaskRole` / `getProjectIdForTask` — every task-scoped route (tasks, comments, subscriptions, activities; JAV-20 — see [task.md](task.md)) |
 | 10 | Project id of a column | `JpaProjectAccessQueries.findProjectIdForColumn` | `ProjectAccessService.ensureColumnRole` / `getProjectIdForColumn` (no route wired yet — RBAC Task 10/11) |
 | 11 | Membership by PK + user | `ProjectMemberRepository.findByProjectIdAndUserIdWithUser` | `PATCH /projects/{id}/members/{userId}` (response) |
 | 12 | Count members with a role | `ProjectMemberRepository.countByProjectIdAndRole` | `PATCH /projects/{id}/members/{userId}`, `DELETE /projects/{id}/members` (last-owner guard) |

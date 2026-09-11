@@ -4,6 +4,8 @@ import com.kanban.common.pipes.Param;
 import com.kanban.common.util.Dates;
 import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.guards.JwtAuth;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.subscription.dto.SubscriberListResponseDto;
 import com.kanban.modules.subscription.dto.SubscriptionStatusDto;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,9 +28,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/tasks")
 public class SubscriptionController {
   private final SubscriptionService subscriptionService;
+  private final ProjectAccessService projectAccessService;
 
-  public SubscriptionController(SubscriptionService subscriptionService) {
+  public SubscriptionController(SubscriptionService subscriptionService,
+      ProjectAccessService projectAccessService) {
     this.subscriptionService = subscriptionService;
+    this.projectAccessService = projectAccessService;
   }
 
   @PostMapping("/{taskId}/subscription")
@@ -41,7 +46,7 @@ public class SubscriptionController {
   @ApiResponse(responseCode = "404", description = "Task not found")
   public SubscriptionStatusDto subscribe(@Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId,
       @CurrentUser("id") String userId) {
-    subscriptionService.ensureTaskExists(taskId);
+    projectAccessService.ensureTaskRole(taskId, userId, ProjectRole.VIEWER);
     subscriptionService.subscribeStrict(taskId, userId, SubscriptionSource.MANUAL);
     return subscriptionService.getMyStatus(taskId, userId);
   }
@@ -56,7 +61,7 @@ public class SubscriptionController {
   @ApiResponse(responseCode = "404", description = "Task not found")
   public void unsubscribe(@Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId,
       @CurrentUser("id") String userId) {
-    subscriptionService.ensureTaskExists(taskId);
+    projectAccessService.ensureTaskRole(taskId, userId, ProjectRole.VIEWER);
     subscriptionService.unsubscribe(taskId, userId);
   }
 
@@ -69,7 +74,7 @@ public class SubscriptionController {
   @ApiResponse(responseCode = "404", description = "Task not found")
   public SubscriptionStatusDto getMyStatus(@Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId,
       @CurrentUser("id") String userId) {
-    subscriptionService.ensureTaskExists(taskId);
+    projectAccessService.ensureTaskRole(taskId, userId, ProjectRole.VIEWER);
     return subscriptionService.getMyStatus(taskId, userId);
   }
 
@@ -80,8 +85,9 @@ public class SubscriptionController {
   @Parameter(name = "taskId", description = "Task UUID")
   @ApiResponse(responseCode = "200")
   @ApiResponse(responseCode = "404", description = "Task not found")
-  public SubscriberListResponseDto listSubscribers(@Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId) {
-    subscriptionService.ensureTaskExists(taskId);
+  public SubscriberListResponseDto listSubscribers(@Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId,
+      @CurrentUser("id") String userId) {
+    projectAccessService.ensureTaskRole(taskId, userId, ProjectRole.VIEWER);
     List<SubscriberListResponseDto.SubscriberDto> items = new ArrayList<>();
     for (TaskSubscription s : subscriptionService.listSubscribers(taskId)) {
       items.add(new SubscriberListResponseDto.SubscriberDto(

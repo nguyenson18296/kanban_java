@@ -4,6 +4,7 @@ import com.kanban.common.api.PaginatedResponse;
 import com.kanban.common.pipes.Param;
 import com.kanban.common.validation.ValidatedQuery;
 import com.kanban.modules.activity.dto.ActivityQueryDto;
+import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.guards.JwtAuth;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -33,7 +34,8 @@ public class ActivityController {
   @ApiResponse(responseCode = "200", description = "Paginated list of task activities")
   @ApiResponse(responseCode = "404", description = "Task not found")
   public PaginatedResponse<Map<String, Object>> findByTask(
-      @Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId, @ValidatedQuery ActivityQueryDto query) {
-    return activityService.findByTask(taskId, query);
+      @Param(value = "taskId", pipe = Param.Pipe.UUID) String taskId, @ValidatedQuery ActivityQueryDto query,
+      @CurrentUser("id") String userId) {
+    return activityService.findByTask(taskId, query, userId);
   }
 }

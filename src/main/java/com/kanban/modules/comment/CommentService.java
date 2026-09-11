@@ -16,6 +16,8 @@ import com.kanban.modules.comment.dto.UpdateCommentDto;
 import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.CommentCreatedEvent;
 import com.kanban.modules.notification.events.CommentMentionedEvent;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.Task;
@@ -40,17 +42,21 @@ public class CommentService {
   private final EventBus eventBus;
   private final SubscriptionService subscriptionService;
   private final MentionService mentionService;
+  private final ProjectAccessService projectAccessService;
 
   public CommentService(CommentRepository commentRepository, TaskRepository taskRepository, EventBus eventBus,
-      SubscriptionService subscriptionService, MentionService mentionService) {
+      SubscriptionService subscriptionService, MentionService mentionService,
+      ProjectAccessService projectAccessService) {
     this.commentRepository = commentRepository;
     this.taskRepository = taskRepository;
     this.eventBus = eventBus;
     this.subscriptionService = subscriptionService;
     this.mentionService = mentionService;
+    this.projectAccessService = projectAccessService;
   }
 
   public Comment create(String taskId, String authorId, CreateCommentDto dto) {
+    projectAccessService.ensureTaskRole(taskId, authorId, ProjectRole.MEMBER);
     try {
       Task task = taskRepository.findById(taskId).orElseThrow(() -> taskNotFound(taskId));
       Comment comment = new Comment();
@@ -107,7 +113,7 @@ public class CommentService {
                 "comment_preview", preview)));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to create comment", e);
@@ -115,9 +121,9 @@ public class CommentService {
     }
   }
 
-  public PaginatedResponse<Map<String, Object>> findByTask(String taskId, CommentQueryDto query) {
+  public PaginatedResponse<Map<String, Object>> findByTask(String taskId, CommentQueryDto query, String userId) {
+    projectAccessService.ensureTaskRole(taskId, userId, ProjectRole.VIEWER);
     try {
-      ensureTaskExists(taskId);
       int page = query.page == null ? 1 : query.page;
       int limit = query.limit == null ? 20 : query.limit;
       CommentSortOrder sort = query.sort == null ? CommentSortOrder.DESC : query.sort;
@@ -126,7 +132,7 @@ public class CommentService {
           PageRequest.of(page - 1, limit, Sort.by(direction, "createdAt")));
       return new PaginatedResponse<>(result.getContent().stream().map(Comment::toJson).toList(),
           PaginationMeta.of(page, limit, result.getTotalElements()));
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to fetch comments", e);
@@ -167,12 +173,6 @@ public class CommentService {
     return commentRepository.findByIdWithAuthor(id).orElseThrow(() -> new NotFoundException(Json.map(
         "statusCode", 404,
         "message", "Comment with id \"" + id + "\" not found")));
-  }
-
-  private void ensureTaskExists(String taskId) {
-    if (!taskRepository.existsById(taskId)) {
-      throw taskNotFound(taskId);
-    }
   }
 
   private static void ensureOwnership(Comment comment, String userId) {

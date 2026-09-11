@@ -30,7 +30,7 @@ import org.hibernate.generator.EventType;
 @Entity
 @Table(name = "tasks")
 public class Task {
-  /** Relation names as used by TypeORM {@code relations: [...]}. */
+  /** Relation paths must exactly match the Java relationship field names used by JPA and {@code toJson}. */
   public static final String REL_ASSIGNEES = "assignees";
   public static final String REL_LABELS = "labels";
   public static final String REL_CREATOR = "creator";

@@ -4,12 +4,12 @@ import com.kanban.common.api.PaginatedResponse;
 import com.kanban.common.api.PaginationMeta;
 import com.kanban.common.exception.HttpException;
 import com.kanban.common.exception.InternalServerErrorException;
-import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
 import com.kanban.common.util.PgErrors;
 import com.kanban.modules.activity.dto.ActivityQueryDto;
 import com.kanban.modules.activity.events.TaskActivityAction;
-import com.kanban.modules.task.TaskRepository;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectRole;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -23,11 +23,11 @@ public class ActivityService {
   private static final Logger log = LoggerFactory.getLogger(ActivityService.class);
 
   private final ActivityRepository activityRepository;
-  private final TaskRepository taskRepository;
+  private final ProjectAccessService projectAccessService;
 
-  public ActivityService(ActivityRepository activityRepository, TaskRepository taskRepository) {
+  public ActivityService(ActivityRepository activityRepository, ProjectAccessService projectAccessService) {
     this.activityRepository = activityRepository;
-    this.taskRepository = taskRepository;
+    this.projectAccessService = projectAccessService;
   }
 
   public Activity create(String taskId, String actorId, TaskActivityAction action, Map<String, Object> payload) {
@@ -39,20 +39,16 @@ public class ActivityService {
     return activityRepository.save(activity);
   }
 
-  public PaginatedResponse<Map<String, Object>> findByTask(String taskId, ActivityQueryDto query) {
+  public PaginatedResponse<Map<String, Object>> findByTask(String taskId, ActivityQueryDto query, String userId) {
+    projectAccessService.ensureTaskRole(taskId, userId, ProjectRole.VIEWER);
     try {
-      if (!taskRepository.existsById(taskId)) {
-        throw new NotFoundException(Json.map(
-            "statusCode", 404,
-            "message", "Task with id \"" + taskId + "\" not found"));
-      }
       int page = query.page == null ? 1 : query.page;
       int limit = query.limit == null ? 20 : query.limit;
       Page<Activity> result = activityRepository.findByTaskFiltered(taskId, query.action,
           PageRequest.of(page - 1, limit));
       return new PaginatedResponse<>(result.getContent().stream().map(Activity::toJsonWithActor).toList(),
           PaginationMeta.of(page, limit, result.getTotalElements()));
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to fetch task activities", e);

@@ -19,8 +19,9 @@ public interface TaskRepository extends JpaRepository<Task, String> {
 
   /** relations: assignees, labels, creator, subtasks, subtasks.parent (no parent) */
   @EntityGraph(attributePaths = {"assignees", "labels", "creator", "subtasks", "subtasks.parent"})
-  @Query("select t from Task t where t.parentId is null")
-  List<Task> findTopLevelWithRelations();
+  @Query("select t from Task t where t.parentId is null and t.columnId in "
+      + "(select c.id from KanbanColumn c where c.projectId in :projectIds)")
+  List<Task> findTopLevelWithRelationsByProjectIds(@Param("projectIds") List<String> projectIds);
 
   /** relations: assignees, labels, creator, subtasks, parent */
   @EntityGraph(attributePaths = {"assignees", "labels", "creator", "subtasks", "parent"})

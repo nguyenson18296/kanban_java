@@ -1,13 +1,18 @@
 package com.kanban.modules.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.kanban.common.exception.ForbiddenException;
+import com.kanban.common.exception.NotFoundException;
 import com.kanban.modules.kanbancolumn.KanbanColumn;
 import com.kanban.modules.kanbancolumn.KanbanColumnRepository;
 import com.kanban.modules.label.LabelRepository;
@@ -15,6 +20,8 @@ import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
 import com.kanban.modules.notification.events.TaskAssignedEvent;
 import com.kanban.modules.notification.events.TaskUpdatedEvent;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.dto.CreateTaskDto;
@@ -41,6 +48,7 @@ class TaskServiceTest {
   private RecordingEventBus events;
   private SubscriptionService subscription;
   private MentionService mention;
+  private ProjectAccessService projectAccessService;
   private TaskService service;
 
   private static User user(String id) {
@@ -72,7 +80,9 @@ class TaskServiceTest {
     mention = mock(MentionService.class);
     when(mention.resolveMentionedUserIds(any(), anyList())).thenReturn(List.of());
     when(subscription.getSubscriberIds(any())).thenReturn(List.of());
-    service = new TaskService(taskRepo, userRepo, labelRepo, columnRepo, positions, events, subscription, mention);
+    projectAccessService = mock(ProjectAccessService.class);
+    service = new TaskService(taskRepo, userRepo, labelRepo, columnRepo, positions, events, subscription, mention,
+        projectAccessService);
   }
 
   @Nested
@@ -218,6 +228,86 @@ class TaskServiceTest {
 
       Task result = service.update("t1", dto, "actor");
       assertThat(result.getId()).isEqualTo("t1");
+    }
+  }
+
+  @Nested
+  class Authorization {
+    @Test
+    @DisplayName("update rejects a viewer (403 propagates from the gate)")
+    void rejectsViewer() {
+      when(projectAccessService.ensureTaskRole("task-1", "viewer-user", ProjectRole.MEMBER))
+          .thenThrow(new ForbiddenException());
+      UpdateTaskDto dto = new UpdateTaskDto();
+      dto.title = "x";
+      dto.with("title");
+
+      assertThatThrownBy(() -> service.update("task-1", dto, "viewer-user"))
+          .isInstanceOf(ForbiddenException.class);
+      verify(projectAccessService).ensureTaskRole("task-1", "viewer-user", ProjectRole.MEMBER);
+    }
+
+    @Test
+    @DisplayName("findOneForUser 404-masks tasks in projects the user is not a member of")
+    void masksNonMember() {
+      when(projectAccessService.ensureTaskRole("task-1", "outsider", ProjectRole.VIEWER))
+          .thenThrow(new NotFoundException());
+      assertThatThrownBy(() -> service.findOneForUser("task-1", "outsider")).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("findAllForUser returns [] for a user with no memberships without querying tasks")
+    void noMemberships() {
+      when(projectAccessService.getProjectIdsForUser("lonely")).thenReturn(List.of());
+      assertThat(service.findAllForUser("lonely")).isEmpty();
+      verifyNoInteractions(taskRepo);
+    }
+
+    private KanbanColumn columnIn(int id, String projectId) {
+      KanbanColumn c = new KanbanColumn();
+      c.setId(id);
+      c.setProjectId(projectId);
+      return c;
+    }
+
+    @Test
+    @DisplayName("move to a column in another project fails before any write when the caller is not a member there")
+    void moveRejectsForeignProject() {
+      when(projectAccessService.ensureTaskRole("task-1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(taskRepo.findColumnIdRowById("task-1")).thenReturn(List.of(10));
+      when(columnRepo.findById(20)).thenReturn(Optional.of(columnIn(20, "projB")));
+      when(projectAccessService.ensureRole("projB", "actor", ProjectRole.MEMBER)).thenThrow(new NotFoundException());
+
+      assertThatThrownBy(() -> service.move("task-1", 20, 0, "actor")).isInstanceOf(NotFoundException.class);
+      verify(positions, never()).moveTask(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    @DisplayName("move to a column in another project gates member on the target project")
+    void moveGatesTargetProject() {
+      when(projectAccessService.ensureTaskRole("task-1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(taskRepo.findColumnIdRowById("task-1")).thenReturn(List.of(10));
+      when(columnRepo.findById(20)).thenReturn(Optional.of(columnIn(20, "projB")));
+      when(taskRepo.findByIdWithFullRelations("task-1")).thenReturn(Optional.of(new Task()));
+
+      service.move("task-1", 20, 0, "actor");
+
+      verify(projectAccessService).ensureRole("projB", "actor", ProjectRole.MEMBER);
+      verify(positions).moveTask("task-1", 20, 0);
+    }
+
+    @Test
+    @DisplayName("move within the same project does not run a target-project gate")
+    void moveSameProjectSkipsTargetGate() {
+      when(projectAccessService.ensureTaskRole("task-1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(taskRepo.findColumnIdRowById("task-1")).thenReturn(List.of(10));
+      when(columnRepo.findById(11)).thenReturn(Optional.of(columnIn(11, "projA")));
+      when(taskRepo.findByIdWithFullRelations("task-1")).thenReturn(Optional.of(new Task()));
+
+      service.move("task-1", 11, 0, "actor");
+
+      verify(projectAccessService, never()).ensureRole(any(), any(), any());
+      verify(positions).moveTask("task-1", 11, 0);
     }
   }
 }
