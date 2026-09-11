@@ -2,6 +2,7 @@ package com.kanban.modules.user;
 
 import com.kanban.common.api.ApiListResponse;
 import com.kanban.common.exception.ConflictException;
+import com.kanban.common.exception.ForbiddenException;
 import com.kanban.common.exception.HttpException;
 import com.kanban.common.exception.InternalServerErrorException;
 import com.kanban.common.exception.NotFoundException;
@@ -81,8 +82,16 @@ public class UserService {
     }
   }
 
-  /** {@code { data: [{ ...project, role, joined_at }], status, success }}. */
-  public ApiListResponse<Map<String, Object>> findProjects(String userId) {
+  /**
+   * {@code { data: [{ ...project, role, joined_at }], status, success }}. Only the user
+   * themself may list their projects: {@code callerId} must equal {@code userId} (403).
+   */
+  public ApiListResponse<Map<String, Object>> findProjects(String userId, String callerId) {
+    if (!userId.equals(callerId)) {
+      throw new ForbiddenException(Json.map(
+          "statusCode", 403,
+          "message", "You can only view your own projects"));
+    }
     try {
       findOneById(userId);
       List<ProjectMember> memberships = projectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc(userId);

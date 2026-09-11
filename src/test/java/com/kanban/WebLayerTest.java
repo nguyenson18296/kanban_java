@@ -2,13 +2,18 @@ package com.kanban;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.kanban.common.api.ApiListResponse;
 import com.kanban.common.exception.GlobalExceptionHandler;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
@@ -22,10 +27,14 @@ import com.kanban.modules.auth.interfaces.JwtPayload;
 import com.kanban.modules.board.BoardController;
 import com.kanban.modules.board.BoardService;
 import com.kanban.modules.board.dto.BoardResponse;
+import com.kanban.modules.label.LabelController;
+import com.kanban.modules.label.LabelService;
 import com.kanban.modules.project.ProjectAccessService;
 import com.kanban.modules.project.ProjectMember;
 import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.project.guards.ProjectRoleInterceptor;
+import com.kanban.modules.team.TeamController;
+import com.kanban.modules.team.TeamService;
 import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserController;
 import com.kanban.modules.user.UserRole;
@@ -41,16 +50,19 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
  * Port of test/app.e2e-spec.ts (GET / → "Hello World!") plus the Nest wire-format
  * contracts: validation error bodies, guard 401 body, pipe 400 body, unknown route 404.
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
-    BoardController.class})
+    BoardController.class, TeamController.class, LabelController.class})
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     ProjectRoleInterceptor.class, AppService.class})
 class WebLayerTest {
+  private static final String OTHER_USER_ID = "22222222-2222-4222-8222-222222222222";
+
   @Autowired
   private MockMvc mvc;
 
@@ -68,6 +80,25 @@ class WebLayerTest {
 
   @MockitoBean
   private ProjectAccessService projectAccessService;
+
+  @MockitoBean
+  private TeamService teamService;
+
+  @MockitoBean
+  private LabelService labelService;
+
+  private void assertUnauthorized(MockHttpServletRequestBuilder request) throws Exception {
+    mvc.perform(request)
+        .andExpect(status().isUnauthorized())
+        .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", JsonCompareMode.STRICT));
+  }
+
+  /** Makes {@code Bearer tok} resolve to the active user {@code u1}. */
+  private void authenticateU1() {
+    when(jwtService.verify("tok")).thenReturn(new JwtPayload("u1", "a@b.co", "backend_developer"));
+    when(authService.validateUserById("u1"))
+        .thenReturn(new User("u1", "a@b.co", "A", UserRole.BACKEND_DEVELOPER, null, true));
+  }
 
   @Test
   @DisplayName("/ (GET) → 200 Hello World!")
@@ -144,6 +175,88 @@ class WebLayerTest {
   }
 
   @Test
+  @DisplayName("GET /users, /users/me/projects, /users/:id, /users/:id/projects without token → 401 (JAV-21)")
+  void userReadsRequireToken() throws Exception {
+    assertUnauthorized(get("/api/users"));
+    assertUnauthorized(get("/api/users/me/projects"));
+    assertUnauthorized(get("/api/users/" + OTHER_USER_ID));
+    assertUnauthorized(get("/api/users/" + OTHER_USER_ID + "/projects"));
+  }
+
+  @Test
+  @DisplayName("GET /users/:id/projects hands the caller id to the service (the self-only check lives there)")
+  void userProjectsPassCallerId() throws Exception {
+    authenticateU1();
+    when(userService.findProjects(OTHER_USER_ID, "u1")).thenReturn(ApiListResponse.ok(List.of()));
+
+    mvc.perform(get("/api/users/" + OTHER_USER_ID + "/projects").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data").isArray());
+    verify(userService).findProjects(OTHER_USER_ID, "u1");
+  }
+
+  @Test
+  @DisplayName("GET /users/me/projects resolves both ids to the caller")
+  void myProjectsUseCallerId() throws Exception {
+    authenticateU1();
+    when(userService.findProjects("u1", "u1")).thenReturn(ApiListResponse.ok(List.of()));
+
+    mvc.perform(get("/api/users/me/projects").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data").isArray());
+    verify(userService).findProjects("u1", "u1");
+  }
+
+  @Test
+  @DisplayName("GET /projects/:projectId/teams[/:teamId[/members]] without token → 401 (JAV-21)")
+  void teamReadsRequireToken() throws Exception {
+    assertUnauthorized(get("/api/projects/UrzWUH3e/teams"));
+    assertUnauthorized(get("/api/projects/UrzWUH3e/teams/7"));
+    assertUnauthorized(get("/api/projects/UrzWUH3e/teams/7/members"));
+  }
+
+  @Test
+  @DisplayName("every /labels route without token → 401 (JAV-21: labels stay global, JWT stops anonymous use)")
+  void labelRoutesRequireToken() throws Exception {
+    assertUnauthorized(get("/api/labels"));
+    assertUnauthorized(get("/api/labels/1"));
+    assertUnauthorized(post("/api/labels"));
+    assertUnauthorized(patch("/api/labels/1"));
+    assertUnauthorized(delete("/api/labels/1"));
+  }
+
+  @Test
+  @DisplayName("team reads as a non-member → masked project 404 before the handler runs (@RequireProjectRole)")
+  void teamReadsNonMemberMasked404() throws Exception {
+    authenticateU1();
+    when(projectAccessService.ensureRole(eq("UrzWUH3e"), eq("u1"), any()))
+        .thenThrow(new NotFoundException(Json.map(
+            "statusCode", 404, "message", "Project with id \"UrzWUH3e\" not found")));
+
+    for (String path : List.of("/api/projects/UrzWUH3e/teams", "/api/projects/UrzWUH3e/teams/7",
+        "/api/projects/UrzWUH3e/teams/7/members")) {
+      mvc.perform(get(path).header("Authorization", "Bearer tok"))
+          .andExpect(status().isNotFound())
+          .andExpect(jsonPath("$.message").value("Project with id \"UrzWUH3e\" not found"));
+    }
+    verifyNoInteractions(teamService);
+  }
+
+  @Test
+  @DisplayName("GET /projects/:projectId/teams as a member → viewer gate runs, then the handler")
+  void teamListMemberOk() throws Exception {
+    authenticateU1();
+    when(projectAccessService.ensureRole(eq("UrzWUH3e"), eq("u1"), any()))
+        .thenReturn(new ProjectMember("UrzWUH3e", "u1", ProjectRole.VIEWER));
+    when(teamService.findAllByProject("UrzWUH3e")).thenReturn(ApiListResponse.ok(List.of()));
+
+    mvc.perform(get("/api/projects/UrzWUH3e/teams").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data").isArray());
+    verify(projectAccessService).ensureRole("UrzWUH3e", "u1", ProjectRole.VIEWER);
+  }
+
+  @Test
   @DisplayName("JwtAuthGuard with a valid token → current user profile (no password_hash)")
   void authorizedProfile() throws Exception {
     when(jwtService.verify("tok")).thenReturn(new JwtPayload("u1", "a@b.co", "backend_developer"));
@@ -159,9 +272,10 @@ class WebLayerTest {
   }
 
   @Test
-  @DisplayName("ParseUUIDPipe → 400 'Validation failed (uuid is expected)'")
+  @DisplayName("ParseUUIDPipe → 400 'Validation failed (uuid is expected)' (route is @JwtAuth since JAV-21)")
   void uuidPipe() throws Exception {
-    mvc.perform(get("/api/users/not-a-uuid"))
+    authenticateU1();
+    mvc.perform(get("/api/users/not-a-uuid").header("Authorization", "Bearer tok"))
         .andExpect(status().isBadRequest())
         .andExpect(content().json(
             "{\"message\":\"Validation failed (uuid is expected)\",\"error\":\"Bad Request\",\"statusCode\":400}",
