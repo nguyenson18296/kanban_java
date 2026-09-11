@@ -22,7 +22,7 @@ create, update, delete, find) is not documented yet — add it here when those p
 | 2 | Membership exists? | `ProjectMemberRepository.existsByProjectIdAndUserId` | `POST /projects/{projectId}/teams/{teamId}/members` |
 | 3 | Project ids of a user | `ProjectMemberRepository.findProjectIdsByUserId` | Socket.IO connect (presence rooms); `ProjectAccessService.getProjectIdsForUser` |
 | 4 | Members of a project + user | `ProjectMemberRepository.findByProjectIdWithUserOrderByJoinedAtAsc` | `GET /projects/{id}/members` |
-| 5 | Projects of a user + project + creator | `ProjectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc` | `GET /users/me/projects`, `GET /users/{id}/projects` |
+| 5 | Projects of a user + project + creator | `ProjectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc` | `GET /projects`, `GET /users/me/projects`, `GET /users/{id}/projects` |
 | 6 | Existing memberships among candidates | `ProjectMemberRepository.findByProjectIdAndUserIdIn` | `POST /projects/{id}/members`, `DELETE /projects/{id}/members` (target roles) |
 | 7 | Insert membership | `ProjectMemberRepository.save` / `saveAll` | `POST /projects` (creator → owner), `POST /projects/{id}/members` |
 | 8 | Bulk delete memberships | `ProjectMemberRepository.deleteByProjectIdAndUserIdIn` | `DELETE /projects/{id}/members` |
@@ -100,7 +100,9 @@ ORDER BY m.joined_at ASC;
 
 `ProjectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc(userId)` — JPQL +
 `@EntityGraph(attributePaths = {"project", "project.creator"})`. Serves
-`GET /users/me/projects` and `GET /users/{id}/projects` via `UserService.findProjects`.
+`GET /projects` via `ProjectService.findAll` (this **replaced** the old unscoped
+`findAllWithCreatorOrderByCreatedAtDesc`, so `GET /projects` now returns only the caller's
+projects) and `GET /users/me/projects` / `GET /users/{id}/projects` via `UserService.findProjects`.
 One query, two joins.
 
 ```sql
@@ -273,13 +275,18 @@ because these endpoints run it first.
 | Endpoint | Queries, in order |
 |---|---|
 | `POST /projects` | project INSERT (see project CRUD) → **#7** (`owner`, preceded by the merge SELECT) — one transaction |
-| `GET /projects/{id}/members` | `existsById` → **#4** |
+| `GET /projects` 🔒 | **#5** (scoped to the caller's memberships) |
+| `GET /projects/{id}` 🔒 | **#1** (gate, `viewer`) → project fetch (`findByIdWithCreator`, project CRUD) |
+| `PATCH /projects/{id}` 🔒 | **#1** (gate, `admin`) → project update (project CRUD) |
+| `DELETE /projects/{id}` 🔒 | **#1** (gate, `owner`) → project delete (project CRUD) |
+| `GET /projects/{id}/members` 🔒 | **#1** (gate, `viewer`) → **#4** |
 | `POST /projects/{id}/members` 🔒 | `existsById` → **#1** (gate, `admin`) → `users` lookup for the candidate ids → **#6** → **#7** ×N |
 | `DELETE /projects/{id}/members` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `viewer`; `admin`/`owner` enforced in-service per target roles, self-leave exempt) → **#6** (target roles) → **#12** only when owners leave → team-members DELETE → **#8** |
 | `PATCH /projects/{id}/members/{userId}` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `admin`; `owner` enforced in-service when the current or new role is `owner`/`admin`) → **#1** (target membership) → **#12** only when demoting an `owner` → **#1** + **#13** only when the role actually changes → **#11** |
 | `POST /projects/{projectId}/teams` 🔒 | **#1** (gate, `admin`) → team INSERT |
 | `POST /projects/{projectId}/teams/{teamId}/members` 🔒 | **#1** (gate, `admin`) → team lookup → **#2** → team-member exists? (`findByTeamIdAndUserId`) → team-member INSERT |
 | `DELETE /projects/{projectId}/teams/{teamId}/members/{userId}` 🔒 | **#1** (gate, `admin`) → team-member DELETE |
+| `GET /board/{projectId}` 🔒 | **#1** (gate, `viewer`) → board aggregation (see board module) |
 | `GET /users/me/projects` 🔒, `GET /users/{id}/projects` | **#5** |
 | Socket.IO connect | **#3** (join `project:<id>` rooms) |
 

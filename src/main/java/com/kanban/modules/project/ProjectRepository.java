@@ -11,10 +11,6 @@ import org.springframework.data.repository.query.Param;
 
 public interface ProjectRepository extends JpaRepository<Project, String> {
   @EntityGraph(attributePaths = "creator")
-  @Query("select p from Project p order by p.createdAt desc")
-  List<Project> findAllWithCreatorOrderByCreatedAtDesc();
-
-  @EntityGraph(attributePaths = "creator")
   @Query("select p from Project p where p.id = :id")
   Optional<Project> findByIdWithCreator(@Param("id") String id);
 

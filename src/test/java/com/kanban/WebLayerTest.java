@@ -1,6 +1,7 @@
 package com.kanban;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -9,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kanban.common.exception.GlobalExceptionHandler;
+import com.kanban.common.exception.NotFoundException;
+import com.kanban.common.json.Json;
 import com.kanban.config.JacksonConfig;
 import com.kanban.config.WebMvcConfig;
 import com.kanban.modules.auth.AuthController;
@@ -18,12 +21,16 @@ import com.kanban.modules.auth.guards.JwtAuthInterceptor;
 import com.kanban.modules.auth.interfaces.JwtPayload;
 import com.kanban.modules.board.BoardController;
 import com.kanban.modules.board.BoardService;
+import com.kanban.modules.board.dto.BoardResponse;
 import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectMember;
+import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.project.guards.ProjectRoleInterceptor;
 import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserController;
 import com.kanban.modules.user.UserRole;
 import com.kanban.modules.user.UserService;
+import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,6 +39,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -94,7 +102,7 @@ class WebLayerTest {
   void unauthorizedBody() throws Exception {
     mvc.perform(get("/api/auth/me"))
         .andExpect(status().isUnauthorized())
-        .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", true));
+        .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", JsonCompareMode.STRICT));
   }
 
   @Test
@@ -102,7 +110,37 @@ class WebLayerTest {
   void boardRequiresToken() throws Exception {
     mvc.perform(get("/api/board/UrzWUH3e"))
         .andExpect(status().isUnauthorized())
-        .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", true));
+        .andExpect(content().json("{\"message\":\"Unauthorized\",\"statusCode\":401}", JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("GET /board/:projectId as a non-member → masked 404 (@RequireProjectRole gate)")
+  void boardNonMemberMasked404() throws Exception {
+    when(jwtService.verify("tok")).thenReturn(new JwtPayload("u1", "a@b.co", "backend_developer"));
+    when(authService.validateUserById("u1"))
+        .thenReturn(new User("u1", "a@b.co", "A", UserRole.BACKEND_DEVELOPER, null, true));
+    when(projectAccessService.ensureRole(eq("UrzWUH3e"), eq("u1"), any()))
+        .thenThrow(new NotFoundException(Json.map(
+            "statusCode", 404, "message", "Project with id \"UrzWUH3e\" not found")));
+
+    mvc.perform(get("/api/board/UrzWUH3e").header("Authorization", "Bearer tok"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Project with id \"UrzWUH3e\" not found"));
+  }
+
+  @Test
+  @DisplayName("GET /board/:projectId as a member → 200 (gate passes to the handler)")
+  void boardMemberOk() throws Exception {
+    when(jwtService.verify("tok")).thenReturn(new JwtPayload("u1", "a@b.co", "backend_developer"));
+    when(authService.validateUserById("u1"))
+        .thenReturn(new User("u1", "a@b.co", "A", UserRole.BACKEND_DEVELOPER, null, true));
+    when(projectAccessService.ensureRole(eq("UrzWUH3e"), eq("u1"), any()))
+        .thenReturn(new ProjectMember("UrzWUH3e", "u1", ProjectRole.VIEWER));
+    when(boardService.getBoard(eq("UrzWUH3e"), any())).thenReturn(new BoardResponse(List.of()));
+
+    mvc.perform(get("/api/board/UrzWUH3e").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.columns").isArray());
   }
 
   @Test
@@ -127,7 +165,7 @@ class WebLayerTest {
         .andExpect(status().isBadRequest())
         .andExpect(content().json(
             "{\"message\":\"Validation failed (uuid is expected)\",\"error\":\"Bad Request\",\"statusCode\":400}",
-            true));
+            JsonCompareMode.STRICT));
   }
 
   @Test
@@ -136,7 +174,7 @@ class WebLayerTest {
     mvc.perform(get("/api/nope"))
         .andExpect(status().isNotFound())
         .andExpect(content().json(
-            "{\"message\":\"Cannot GET /api/nope\",\"error\":\"Not Found\",\"statusCode\":404}", true));
+            "{\"message\":\"Cannot GET /api/nope\",\"error\":\"Not Found\",\"statusCode\":404}", JsonCompareMode.STRICT));
   }
 
   @Test

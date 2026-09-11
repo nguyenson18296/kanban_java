@@ -145,13 +145,9 @@ public class ProjectService {
     throw new InternalServerErrorException(Json.map("statusCode", 500, "message", "Failed to create project"));
   }
 
-  public List<Project> findAll() {
-    try {
-      return projectRepository.findAllWithCreatorOrderByCreatedAtDesc();
-    } catch (RuntimeException e) {
-      log.error("Failed to fetch projects", e);
-      throw internal("Failed to fetch projects", e);
-    }
+  public List<Project> findAll(String userId) {
+    List<ProjectMember> memberships = memberRepository.findByUserIdWithProjectOrderByJoinedAtDesc(userId);
+    return memberships.stream().map(ProjectMember::getProject).toList();
   }
 
   public Project findOneById(String id) {

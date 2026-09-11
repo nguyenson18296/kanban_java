@@ -9,7 +9,9 @@ import com.kanban.common.json.Json;
 import com.kanban.common.util.PgErrors;
 import com.kanban.modules.kanbancolumn.dto.CreateKanbanColumnDto;
 import com.kanban.modules.kanbancolumn.dto.UpdateKanbanColumnDto;
-import com.kanban.modules.project.ProjectRepository;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectRole;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,18 +22,16 @@ public class KanbanColumnService {
   private static final Logger log = LoggerFactory.getLogger(KanbanColumnService.class);
 
   private final KanbanColumnRepository columnRepository;
-  private final ProjectRepository projectRepository;
+  private final ProjectAccessService projectAccessService;
 
-  public KanbanColumnService(KanbanColumnRepository columnRepository, ProjectRepository projectRepository) {
+  public KanbanColumnService(KanbanColumnRepository columnRepository, ProjectAccessService projectAccessService) {
     this.columnRepository = columnRepository;
-    this.projectRepository = projectRepository;
+    this.projectAccessService = projectAccessService;
   }
 
-  public KanbanColumn create(CreateKanbanColumnDto dto) {
+  public KanbanColumn create(CreateKanbanColumnDto dto, String actorId) {
+    projectAccessService.ensureRole(dto.project_id, actorId, ProjectRole.ADMIN);
     try {
-      if (!projectRepository.existsById(dto.project_id)) {
-        throw projectNotFound(dto.project_id);
-      }
       KanbanColumn column = new KanbanColumn();
       column.setName(dto.name);
       column.setProjectId(dto.project_id);
@@ -56,17 +56,26 @@ public class KanbanColumnService {
     }
   }
 
-  public ApiListResponse<Map<String, Object>> findAll() {
+  public ApiListResponse<Map<String, Object>> findAll(String actorId) {
+    List<String> projectIds = projectAccessService.getProjectIdsForUser(actorId);
+    if (projectIds.isEmpty()) {
+      return ApiListResponse.ok(List.of());
+    }
     try {
-      return ApiListResponse.ok(columnRepository.findByIsArchivedFalseOrderByPositionAsc().stream()
-          .map(KanbanColumn::toJson).toList());
+      return ApiListResponse.ok(columnRepository.findByProjectIdInAndIsArchivedFalseOrderByPositionAsc(projectIds)
+          .stream().map(KanbanColumn::toJson).toList());
     } catch (RuntimeException e) {
       log.error("Failed to fetch columns", e);
       throw internal("Failed to fetch columns", e);
     }
   }
 
-  public KanbanColumn findOneById(int id) {
+  public KanbanColumn findOneById(int id, String actorId) {
+    projectAccessService.ensureColumnRole(id, actorId, ProjectRole.VIEWER);
+    return getColumnOrThrow(id);
+  }
+
+  private KanbanColumn getColumnOrThrow(int id) {
     try {
       return columnRepository.findById(id).orElseThrow(() -> new NotFoundException(Json.map(
           "statusCode", 404,
@@ -79,12 +88,15 @@ public class KanbanColumnService {
     }
   }
 
-  public KanbanColumn update(int id, UpdateKanbanColumnDto dto) {
+  public KanbanColumn update(int id, UpdateKanbanColumnDto dto, String actorId) {
+    projectAccessService.ensureColumnRole(id, actorId, ProjectRole.ADMIN);
     try {
-      if (dto.project_id != null && !dto.project_id.isEmpty() && !projectRepository.existsById(dto.project_id)) {
-        throw projectNotFound(dto.project_id);
+      KanbanColumn column = getColumnOrThrow(id);
+      // Moving the column to a different project requires admin on the target project too;
+      // ensureRole masks a nonexistent/forbidden target as the same 404 (no existence oracle).
+      if (dto.project_id != null && !dto.project_id.isEmpty() && !dto.project_id.equals(column.getProjectId())) {
+        projectAccessService.ensureRole(dto.project_id, actorId, ProjectRole.ADMIN);
       }
-      KanbanColumn column = findOneById(id);
       if (dto.has("name")) {
         column.setName(dto.name);
       }
@@ -98,7 +110,7 @@ public class KanbanColumnService {
         column.setColor(dto.color);
       }
       return columnRepository.saveAndFlush(column);
-    } catch (NotFoundException | ConflictException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException error) {
       if (PgErrors.isCode(error, PgErrors.UNIQUE_VIOLATION)) {
@@ -112,9 +124,10 @@ public class KanbanColumnService {
     }
   }
 
-  public void remove(int id) {
+  public void remove(int id, String actorId) {
+    projectAccessService.ensureColumnRole(id, actorId, ProjectRole.ADMIN);
     try {
-      findOneById(id);
+      getColumnOrThrow(id);
       columnRepository.deleteById(id);
     } catch (NotFoundException e) {
       throw e;
@@ -128,12 +141,6 @@ public class KanbanColumnService {
       log.error("Failed to delete column", error);
       throw internal("Failed to delete column", error);
     }
-  }
-
-  private static NotFoundException projectNotFound(String projectId) {
-    return new NotFoundException(Json.map(
-        "statusCode", 404,
-        "message", "Project with id \"" + projectId + "\" not found"));
   }
 
   private static HttpException internal(String message, Throwable cause) {
