@@ -26,6 +26,8 @@ public class UserController {
   }
 
   @GetMapping
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Get all users")
   @ApiResponse(responseCode = "200", description = "List of users")
   public List<Map<String, Object>> findAll() {
@@ -38,10 +40,12 @@ public class UserController {
   @Operation(summary = "Get projects for the authenticated user")
   @ApiResponse(responseCode = "200", description = "List of user projects")
   public ApiListResponse<Map<String, Object>> findMyProjects(@CurrentUser("id") String userId) {
-    return userService.findProjects(userId);
+    return userService.findProjects(userId, userId);
   }
 
   @GetMapping("/{id}")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Get a user by ID")
   @Parameter(name = "id", description = "User UUID")
   @ApiResponse(responseCode = "200", description = "User found")
@@ -51,12 +55,15 @@ public class UserController {
   }
 
   @GetMapping("/{id}/projects")
-  @Operation(summary = "Get projects for a user")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @Operation(summary = "Get projects for a user (self only)")
   @Parameter(name = "id", description = "User UUID")
   @ApiResponse(responseCode = "200", description = "List of user projects")
+  @ApiResponse(responseCode = "403", description = "Can only view your own projects")
   @ApiResponse(responseCode = "404", description = "User not found")
   public ApiListResponse<Map<String, Object>> findUserProjects(
-      @Param(value = "id", pipe = Param.Pipe.UUID) String id) {
-    return userService.findProjects(id);
+      @Param(value = "id", pipe = Param.Pipe.UUID) String id, @CurrentUser("id") String callerId) {
+    return userService.findProjects(id, callerId);
   }
 }

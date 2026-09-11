@@ -27,7 +27,7 @@ create, update, delete, find) is not documented yet — add it here when those p
 | 7 | Insert membership | `ProjectMemberRepository.save` / `saveAll` | `POST /projects` (creator → owner), `POST /projects/{id}/members` |
 | 8 | Bulk delete memberships | `ProjectMemberRepository.deleteByProjectIdAndUserIdIn` | `DELETE /projects/{id}/members` |
 | 9 | Project id of a task | `JpaProjectAccessQueries.findProjectIdForTask` | `ProjectAccessService.ensureTaskRole` / `getProjectIdForTask` — every task-scoped route (tasks, comments, subscriptions, activities; JAV-20 — see [task.md](task.md)) |
-| 10 | Project id of a column | `JpaProjectAccessQueries.findProjectIdForColumn` | `ProjectAccessService.ensureColumnRole` / `getProjectIdForColumn` (no route wired yet — RBAC Task 10/11) |
+| 10 | Project id of a column | `JpaProjectAccessQueries.findProjectIdForColumn` | `ProjectAccessService.ensureColumnRole` / `getProjectIdForColumn` — `GET`/`PATCH`/`DELETE /columns/{id}` (JAV-19 — see [kanbancolumn.md](kanbancolumn.md)) |
 | 11 | Membership by PK + user | `ProjectMemberRepository.findByProjectIdAndUserIdWithUser` | `PATCH /projects/{id}/members/{userId}` (response) |
 | 12 | Count members with a role | `ProjectMemberRepository.countByProjectIdAndRole` | `PATCH /projects/{id}/members/{userId}`, `DELETE /projects/{id}/members` (last-owner guard) |
 | 13 | Update membership role | `ProjectMemberRepository.save` on an existing row | `PATCH /projects/{id}/members/{userId}` |
@@ -283,13 +283,14 @@ because these endpoints run it first.
 | `POST /projects/{id}/members` 🔒 | `existsById` → **#1** (gate, `admin`) → `users` lookup for the candidate ids → **#6** → **#7** ×N |
 | `DELETE /projects/{id}/members` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `viewer`; `admin`/`owner` enforced in-service per target roles, self-leave exempt) → **#6** (target roles) → **#12** only when owners leave → team-members DELETE → **#8** |
 | `PATCH /projects/{id}/members/{userId}` 🔒 | one transaction: **#14** (lock) → **#1** (gate, `admin`; `owner` enforced in-service when the current or new role is `owner`/`admin`) → **#1** (target membership) → **#12** only when demoting an `owner` → **#1** + **#13** only when the role actually changes → **#11** |
-| `POST /projects/{projectId}/teams` 🔒 | **#1** (gate, `admin`) → team INSERT |
+| `POST /projects/{projectId}/teams` 🔒 | **#1** (gate, `admin`) → team INSERT (see [team.md](team.md)) |
+| `GET /projects/{projectId}/teams`, `GET …/teams/{teamId}`, `GET …/teams/{teamId}/members` 🔒 | **#1** (interceptor gate, `viewer` — JAV-21) → team reads (see [team.md](team.md)) |
 | `POST /projects/{projectId}/teams/{teamId}/members` 🔒 | **#1** (gate, `admin`) → team lookup → **#2** → team-member exists? (`findByTeamIdAndUserId`) → team-member INSERT |
 | `DELETE /projects/{projectId}/teams/{teamId}/members/{userId}` 🔒 | **#1** (gate, `admin`) → team-member DELETE |
 | `GET /board/{projectId}` 🔒 | **#1** (gate, `viewer`) → board aggregation (see board module) |
-| `GET /users/me/projects` 🔒, `GET /users/{id}/projects` | **#5** |
+| `GET /users/me/projects` 🔒, `GET /users/{id}/projects` 🔒 | **#5** — self only: `GET /users/{id}/projects` returns 403 before any query when `id` is not the caller (JAV-21, see [user.md](user.md)) |
 | Socket.IO connect | **#3** (join `project:<id>` rooms) |
 
-🔒 = `@JwtAuth`. Once routes carry `@RequireProjectRole` (RBAC Tasks 10–12), **#1** runs in
-`ProjectRoleInterceptor` *before* the handler for every annotated route, and task/column
-routes add **#9**/**#10** ahead of it.
+🔒 = `@JwtAuth`. Routes that carry `@RequireProjectRole` (project, board and — since JAV-21 — the
+team reads) run **#1** in `ProjectRoleInterceptor` *before* the handler; task/column routes gate in
+their services and add **#9**/**#10** ahead of it.

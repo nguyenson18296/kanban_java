@@ -2,11 +2,13 @@ package com.kanban.modules.label;
 
 import com.kanban.common.pipes.Param;
 import com.kanban.common.validation.ValidatedBody;
+import com.kanban.modules.auth.guards.JwtAuth;
 import com.kanban.modules.label.dto.CreateLabelDto;
 import com.kanban.modules.label.dto.UpdateLabelDto;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,8 @@ public class LabelController {
 
   @PostMapping
   @ResponseStatus(HttpStatus.CREATED)
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Create a label")
   @ApiResponse(responseCode = "201", description = "Label created")
   @ApiResponse(responseCode = "409", description = "Label name already exists")
@@ -39,6 +43,8 @@ public class LabelController {
   }
 
   @GetMapping
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Get all labels")
   @ApiResponse(responseCode = "200", description = "List of labels")
   public List<Map<String, Object>> findAll() {
@@ -46,6 +52,8 @@ public class LabelController {
   }
 
   @GetMapping("/{id}")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Get a label by ID")
   @Parameter(name = "id", description = "Label ID")
   @ApiResponse(responseCode = "200", description = "Label found")
@@ -55,6 +63,8 @@ public class LabelController {
   }
 
   @PatchMapping("/{id}")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Update a label")
   @Parameter(name = "id", description = "Label ID")
   @ApiResponse(responseCode = "200", description = "Label updated")
@@ -66,6 +76,8 @@ public class LabelController {
   }
 
   @DeleteMapping("/{id}")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
   @Operation(summary = "Delete a label")
   @Parameter(name = "id", description = "Label ID")
   @ApiResponse(responseCode = "200", description = "Label deleted")

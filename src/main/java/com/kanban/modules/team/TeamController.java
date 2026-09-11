@@ -5,6 +5,8 @@ import com.kanban.common.pipes.Param;
 import com.kanban.common.validation.ValidatedBody;
 import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.guards.JwtAuth;
+import com.kanban.modules.project.ProjectRole;
+import com.kanban.modules.project.guards.RequireProjectRole;
 import com.kanban.modules.team.dto.AddTeamMemberDto;
 import com.kanban.modules.team.dto.CreateTeamDto;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,32 +50,44 @@ public class TeamController {
   }
 
   @GetMapping
-  @Operation(summary = "List all teams in a project")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.VIEWER)
+  @Operation(summary = "List all teams in a project (any project member)")
   @Parameter(name = "projectId", description = "Project ID")
   @ApiResponse(responseCode = "200", description = "List of teams")
-  @ApiResponse(responseCode = "404", description = "Project not found")
+  @ApiResponse(responseCode = "404",
+      description = "Project not found (also returned when the caller is not a project member)")
   public ApiListResponse<Map<String, Object>> findAll(
       @Param(value = "projectId", pipe = Param.Pipe.PROJECT_ID) String projectId) {
     return teamService.findAllByProject(projectId);
   }
 
   @GetMapping("/{teamId}")
-  @Operation(summary = "Get a team by ID")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.VIEWER)
+  @Operation(summary = "Get a team by ID (any project member)")
   @Parameter(name = "projectId", description = "Project ID")
   @Parameter(name = "teamId", description = "Team ID")
   @ApiResponse(responseCode = "200", description = "Team found")
-  @ApiResponse(responseCode = "404", description = "Team not found")
+  @ApiResponse(responseCode = "404",
+      description = "Project or team not found (non-member callers get the project 404)")
   public Map<String, Object> findOne(@Param(value = "projectId", pipe = Param.Pipe.PROJECT_ID) String projectId,
       @Param(value = "teamId", pipe = Param.Pipe.INT) int teamId) {
     return teamService.findOneById(projectId, teamId).toJson();
   }
 
   @GetMapping("/{teamId}/members")
-  @Operation(summary = "List team members")
+  @JwtAuth
+  @SecurityRequirement(name = "bearer")
+  @RequireProjectRole(value = ProjectRole.VIEWER)
+  @Operation(summary = "List team members (any project member)")
   @Parameter(name = "projectId", description = "Project ID")
   @Parameter(name = "teamId", description = "Team ID")
   @ApiResponse(responseCode = "200", description = "List of team members")
-  @ApiResponse(responseCode = "404", description = "Team not found")
+  @ApiResponse(responseCode = "404",
+      description = "Project or team not found (non-member callers get the project 404)")
   public ApiListResponse<Map<String, Object>> getMembers(
       @Param(value = "projectId", pipe = Param.Pipe.PROJECT_ID) String projectId,
       @Param(value = "teamId", pipe = Param.Pipe.INT) int teamId) {
