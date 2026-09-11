@@ -12,6 +12,7 @@ import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
 import com.kanban.modules.notification.events.CommentCreatedEvent;
 import com.kanban.modules.notification.events.CommentMentionedEvent;
+import com.kanban.modules.project.ProjectAccessService;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.Task;
@@ -32,6 +33,7 @@ class CommentServiceTest {
   private RecordingEventBus events;
   private SubscriptionService subscription;
   private MentionService mention;
+  private ProjectAccessService projectAccessService;
   private CommentService service;
 
   private List<String> recipientsOf(Class<? extends BaseNotificationEvent> type) {
@@ -45,7 +47,8 @@ class CommentServiceTest {
     events = new RecordingEventBus();
     subscription = mock(SubscriptionService.class);
     mention = mock(MentionService.class);
-    service = new CommentService(commentRepo, taskRepo, events, subscription, mention);
+    projectAccessService = mock(ProjectAccessService.class);
+    service = new CommentService(commentRepo, taskRepo, events, subscription, mention, projectAccessService);
 
     Task task = new Task();
     task.setId("t1");

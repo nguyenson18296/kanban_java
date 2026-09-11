@@ -18,6 +18,8 @@ import com.kanban.modules.label.LabelRepository;
 import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.TaskAssignedEvent;
 import com.kanban.modules.notification.events.TaskUpdatedEvent;
+import com.kanban.modules.project.ProjectAccessService;
+import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.subscription.SubscriptionService;
 import com.kanban.modules.subscription.SubscriptionSource;
 import com.kanban.modules.task.dto.CreateSubtaskDto;
@@ -56,10 +58,12 @@ public class TaskService {
   private final EventBus eventBus;
   private final SubscriptionService subscriptionService;
   private final MentionService mentionService;
+  private final ProjectAccessService projectAccessService;
 
   public TaskService(TaskRepository taskRepository, UserRepository userRepository, LabelRepository labelRepository,
       KanbanColumnRepository columnRepository, TaskPositionFunctions positionFunctions, EventBus eventBus,
-      SubscriptionService subscriptionService, MentionService mentionService) {
+      SubscriptionService subscriptionService, MentionService mentionService,
+      ProjectAccessService projectAccessService) {
     this.taskRepository = taskRepository;
     this.userRepository = userRepository;
     this.labelRepository = labelRepository;
@@ -68,6 +72,7 @@ public class TaskService {
     this.eventBus = eventBus;
     this.subscriptionService = subscriptionService;
     this.mentionService = mentionService;
+    this.projectAccessService = projectAccessService;
   }
 
   private void ensureTaskExists(String id) {
@@ -81,7 +86,8 @@ public class TaskService {
       if (dto.parent_id != null) {
         validateParent(dto.parent_id);
       }
-      resolveColumn(dto.column_id);
+      KanbanColumn column = resolveColumn(dto.column_id);
+      projectAccessService.ensureRole(column.getProjectId(), actorId, ProjectRole.MEMBER);
       Task task = new Task();
       task.setTitle(dto.title);
       task.setColumnId(dto.column_id);
@@ -138,7 +144,8 @@ public class TaskService {
         eventBus.emit(new TaskActivityEvent(actorId, saved.getId(), TaskActivityAction.TASK_CREATED));
       }
       return result;
-    } catch (NotFoundException | BadRequestException e) {
+    } catch (HttpException e) {
+      // re-throw any HTTP-typed error as-is (incl. the gate's 403); the catch below would downgrade it to 500
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to create task", e);
@@ -146,13 +153,12 @@ public class TaskService {
     }
   }
 
-  public List<Task> findAll() {
-    try {
-      return taskRepository.findTopLevelWithRelations();
-    } catch (RuntimeException e) {
-      log.error("Failed to fetch tasks", e);
-      throw internal("Failed to fetch tasks", e);
+  public List<Task> findAllForUser(String userId) {
+    List<String> projectIds = projectAccessService.getProjectIdsForUser(userId);
+    if (projectIds.isEmpty()) {
+      return List.of();
     }
+    return taskRepository.findTopLevelWithRelationsByProjectIds(projectIds);
   }
 
   public Task findByTicketId(String ticketId) {
@@ -179,7 +185,24 @@ public class TaskService {
     }
   }
 
+  public Task findOneForUser(String id, String userId) {
+    projectAccessService.ensureTaskRole(id, userId, ProjectRole.VIEWER);
+    return findOneById(id);
+  }
+
+  public Task findByTicketIdForUser(String ticketId, String userId) {
+    Task task = findByTicketId(ticketId);
+    projectAccessService.ensureTaskRole(task.getId(), userId, ProjectRole.VIEWER);
+    return task;
+  }
+
+  public ApiListResponse<Map<String, Object>> findSubtasksForUser(String parentId, String userId) {
+    projectAccessService.ensureTaskRole(parentId, userId, ProjectRole.VIEWER);
+    return findSubtasks(parentId);
+  }
+
   public Task update(String id, UpdateTaskDto dto, String actorId) {
+    projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(id);
       TaskStatus previousStatus = task.getStatus();
@@ -348,7 +371,7 @@ public class TaskService {
         }
       }
       return updated;
-    } catch (NotFoundException | BadRequestException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to update task", e);
@@ -356,13 +379,14 @@ public class TaskService {
     }
   }
 
-  public void remove(String id) {
+  public void remove(String id, String actorId) {
+    projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
     try {
       findOneById(id);
       // delete through the id so Hibernate removes a managed instance (a detached
       // entity with its loaded subtasks graph would fail the merge step)
       taskRepository.deleteById(id);
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to delete task", e);
@@ -371,6 +395,7 @@ public class TaskService {
   }
 
   public Task addAssignees(String taskId, List<String> userIds, String actorId) {
+    projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(taskId);
       List<User> users = resolveUsers(userIds);
@@ -397,7 +422,7 @@ public class TaskService {
         emitActivity(actorId, taskId, TaskActivityAction.TASK_ASSIGNEE_ADDED, Json.map("users", usersPayload(newUsers)));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to add assignees", e);
@@ -406,6 +431,7 @@ public class TaskService {
   }
 
   public Task removeAssignees(String taskId, List<String> userIds, String actorId) {
+    projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(taskId);
       resolveUsers(userIds);
@@ -425,7 +451,7 @@ public class TaskService {
             Json.map("users", usersPayload(removedUsers)));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to remove assignees", e);
@@ -434,6 +460,7 @@ public class TaskService {
   }
 
   public Task addLabels(String taskId, List<Integer> labelIds, String actorId) {
+    projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(taskId);
       List<Label> labels = resolveLabels(labelIds);
@@ -451,7 +478,7 @@ public class TaskService {
         emitActivity(actorId, taskId, TaskActivityAction.TASK_LABEL_ADDED, Json.map("labels", labelsPayload(newLabels)));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to add labels", e);
@@ -460,6 +487,7 @@ public class TaskService {
   }
 
   public Task removeLabels(String taskId, List<Integer> labelIds, String actorId) {
+    projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(taskId);
       resolveLabels(labelIds);
@@ -479,7 +507,7 @@ public class TaskService {
             Json.map("labels", labelsPayload(removedLabels)));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to remove labels", e);
@@ -488,6 +516,7 @@ public class TaskService {
   }
 
   public Task reorder(String id, int position, String actorId) {
+    projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
     try {
       ensureTaskExists(id);
       positionFunctions.reorderTask(id, position);
@@ -496,7 +525,7 @@ public class TaskService {
         emitActivity(actorId, id, TaskActivityAction.TASK_REORDERED, Json.map("position", position));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to reorder task", e);
@@ -505,13 +534,19 @@ public class TaskService {
   }
 
   public Task move(String id, int columnId, int position, String actorId) {
+    String sourceProjectId = projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
     try {
       List<Integer> current = taskRepository.findColumnIdRowById(id);
       if (current.isEmpty()) {
         throw taskNotFound(id);
       }
       Integer previousColumnId = current.get(0);
-      resolveColumn(columnId);
+      KanbanColumn targetColumn = resolveColumn(columnId);
+      // Moving the task into another project's column requires membership there too,
+      // not just in the task's current project.
+      if (!targetColumn.getProjectId().equals(sourceProjectId)) {
+        projectAccessService.ensureRole(targetColumn.getProjectId(), actorId, ProjectRole.MEMBER);
+      }
       positionFunctions.moveTask(id, columnId, position);
       Task result = findOneById(id);
       if (actorId != null) {
@@ -521,7 +556,7 @@ public class TaskService {
             "position", position));
       }
       return result;
-    } catch (NotFoundException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to move task", e);
@@ -529,13 +564,14 @@ public class TaskService {
     }
   }
 
-  public Task reorderSubtask(String parentId, String subtaskId, int position) {
+  public Task reorderSubtask(String parentId, String subtaskId, int position, String actorId) {
+    projectAccessService.ensureTaskRole(parentId, actorId, ProjectRole.MEMBER);
     try {
       ensureTaskExists(parentId);
       // Atomically validates subtask belongs to parent and reorders
       positionFunctions.reorderSubtask(subtaskId, parentId, position);
       return findOneById(subtaskId);
-    } catch (NotFoundException | BadRequestException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to reorder subtask", e);
@@ -544,12 +580,13 @@ public class TaskService {
   }
 
   public Task createSubtask(String parentId, CreateSubtaskDto dto, String actorId) {
+    projectAccessService.ensureTaskRole(parentId, actorId, ProjectRole.MEMBER);
     try {
       Task parent = findOneById(parentId);
       validateParent(parentId);
       int columnId = dto.column_id != null ? dto.column_id : parent.getColumnId();
       return create(dto.toCreateTaskDto(columnId, parentId), actorId);
-    } catch (NotFoundException | BadRequestException e) {
+    } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
       log.error("Failed to create subtask", e);
