@@ -16,6 +16,9 @@ public interface SocketClient {
   /** {@code client.join(room)} */
   void join(String room);
 
+  /** {@code client.leave(room)} */
+  void leave(String room);
+
   /** {@code client.emit(event, data)} */
   void emit(String event, Object data);
 

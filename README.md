@@ -55,7 +55,7 @@ mvn -DskipTests package && java -jar target/kanban-backend-1.0.0.jar
 
 - API: `http://localhost:1996/api` (`GET /api` → `Hello World!`)
 - Swagger UI: `http://localhost:1996/api/docs` (OpenAPI JSON at `/api/docs-json`) — hidden when `NODE_ENV=production`
-- Socket.IO: `http://localhost:1997` (clients: `io('http://localhost:1997', { auth: { token } })`)
+- Socket.IO: `http://localhost:1997` (clients: `io('http://localhost:1997', { auth: { token } })`) — full message contract for frontend integration: [`docs/api-contracts/socket-events.md`](docs/api-contracts/socket-events.md)
 
 ## Test
 

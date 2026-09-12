@@ -15,6 +15,7 @@ public class FakeSocketClient implements SocketClient {
   private final Map<String, Object> data = new HashMap<>();
   private final InMemoryHandshake handshake;
   public final List<String> joined = new ArrayList<>();
+  public final List<String> left = new ArrayList<>();
   public final List<EmittedEvent> emitted = new ArrayList<>();
   public final List<Boolean> disconnects = new ArrayList<>();
 
@@ -41,6 +42,11 @@ public class FakeSocketClient implements SocketClient {
   @Override
   public void join(String room) {
     joined.add(room);
+  }
+
+  @Override
+  public void leave(String room) {
+    left.add(room);
   }
 
   @Override
