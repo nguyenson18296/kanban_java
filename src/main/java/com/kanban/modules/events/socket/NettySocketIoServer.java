@@ -106,6 +106,11 @@ public class NettySocketIoServer implements SocketServer {
 
     server.addEventListener("token:refresh", Object.class,
         (client, data, ack) -> gateway.handleTokenRefresh(wrap(client), asMap(data)));
+    server.addEventListener("board:join", Object.class,
+        (client, data, ack) -> gateway.handleBoardJoin(wrap(client), asMap(data)));
+    // Frontend emits board:leave -> this listener delegates -> gateway removes the socket from project:<id>.
+    server.addEventListener("board:leave", Object.class,
+        (client, data, ack) -> gateway.handleBoardLeave(wrap(client), asMap(data)));
 
     server.start();
     gateway.afterInit();
@@ -196,6 +201,11 @@ public class NettySocketIoServer implements SocketServer {
     @Override
     public void join(String room) {
       client.joinRoom(room);
+    }
+
+    @Override
+    public void leave(String room) {
+      client.leaveRoom(room);
     }
 
     @Override
