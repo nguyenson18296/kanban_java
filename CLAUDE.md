@@ -149,11 +149,15 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Skills (`.claude/skills/`)
 
-Auto-load by description. All three are **generic Spring references** — where their advice conflicts with this file, **this file wins**:
+Auto-load by description. The three Spring references are **generic** — where their advice conflicts with this file, **this file wins**:
 
 - **`layered-architecture`** — controller/service/repository separation. Conflicts: this repo returns entity `toJson()` maps (not mapper-built response DTOs), validates with `@ValidatedBody` (not `@Valid`), and uses no Lombok.
 - **`transactional-patterns`** — `@Transactional` propagation/isolation/read-only guidance. Conflict: existing `@Modifying` repository methods carry `@Transactional`; don't refactor them, but put new multi-step writes on service methods.
 - **`spring-ai-integration`** — Spring AI `ChatClient`/RAG patterns; no AI code in this repo today.
+
+Repo-specific:
+
+- **`writing-feature-docs`** — `/writing-feature-docs <module | feature | current diff>` writes the Notion-ready feature document to `docs/features/<feature>.md` (15-section template in the skill) from the code, Flyway migrations, `docs/queries/*` and `docs/api-contracts/*`. It documents only — it never changes code or other docs.
 
 ## Known Decisions (not yet settled)
 
