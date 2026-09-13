@@ -4,8 +4,12 @@ import com.kanban.modules.task.Task;
 import java.util.List;
 import java.util.Map;
 
-/** The two filtered board queries (count per column + top-N task ids per column). */
+/**
+ * The two filtered board queries (count per column + top-N task ids per column). {@code search} is
+ * raw websearch text matched against {@code tasks.search_vector} via {@code TaskSearchSql} (JAV-34).
+ */
 public interface BoardQueries {
+  /** {@code search} null = no text filter (the service maps blank input to null). */
   record Filters(List<Integer> columnIds, String priority, String search, String assigneeId, Integer labelId) {}
 
   /** {@code column_id → COUNT(*)} for tasks matching the filters. */

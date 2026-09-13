@@ -1,5 +1,6 @@
 package com.kanban.modules.board;
 
+import com.kanban.modules.search.TaskSearchSql;
 import com.kanban.modules.task.Task;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -23,7 +24,7 @@ public class JpaBoardQueries implements BoardQueries {
       conditions.add("t.priority = CAST(:priority AS tasks_priority_enum)");
     }
     if (f.search() != null) {
-      conditions.add("t.title ILIKE :search");
+      conditions.add(TaskSearchSql.MATCHES);
     }
     if (f.assigneeId() != null) {
       conditions.add("t.id IN (SELECT task_id FROM task_assignees WHERE user_id = CAST(:assigneeId AS uuid))");
@@ -40,8 +41,7 @@ public class JpaBoardQueries implements BoardQueries {
       q.setParameter("priority", f.priority());
     }
     if (f.search() != null) {
-      String escaped = f.search().replace("\\", "\\\\").replaceAll("[%_]", "\\\\$0");
-      q.setParameter("search", "%" + escaped + "%");
+      q.setParameter("search", f.search());
     }
     if (f.assigneeId() != null) {
       q.setParameter("assigneeId", f.assigneeId());

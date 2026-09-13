@@ -26,6 +26,7 @@ including its quirks.
 | `DataSource.query('SELECT fn_move_task…')` | raw SQL | `TaskPositionFunctions` (`JpaTaskPositionFunctions`) |
 | Raw project lookups in `ProjectAccessService` | query builder | `ProjectAccessQueries` (`JpaProjectAccessQueries`) |
 | Board count / ROW_NUMBER queries | query builder | `BoardQueries` (`JpaBoardQueries`) |
+| Task full-text search (Java-only, JAV-34) | — | `TaskSearchQueries` (`JpaTaskSearchQueries`); `TaskSearchSql` shares the predicate with `JpaBoardQueries` |
 | `EventEmitter2.emit` + `@OnEvent` | `@nestjs/event-emitter` | `EventBus` (`SpringEventBus` → `ApplicationEventPublisher`) + `@Async @EventListener` on typed payloads (`eventExecutor` pool). Fire-and-forget, like Nest |
 | Socket.IO gateway | `@nestjs/platform-socket.io` | netty-socketio (`NettySocketIoServer`) behind `SocketServer`/`SocketClient` adapters; `EventsGateway`, `EventsService`, `WsJwtGuard` ported 1:1 |
 | Migrations (`src/migrations`, never executed — `synchronize` was on) | TypeORM | Flyway `V1__baseline_schema.sql` (schema + stored procedures + trigger). `synchronize` has no equivalent and is intentionally not reproduced |
@@ -48,7 +49,8 @@ guards and response shapes are identical.
 | `kanban-column` | `modules.kanbancolumn` | `POST /columns` 201, `GET /columns`, `GET /columns/:id`, `PATCH /columns/:id`, `DELETE /columns/:id` 200 |
 | `label` | `modules.label` | `POST /labels` 201, `GET /labels`, `GET /labels/:id`, `PATCH /labels/:id`, `DELETE /labels/:id` 200 |
 | `task` | `modules.task` | `POST /tasks` 🔒 201, `GET /tasks`, `GET /tasks/by-ticket/:ticketId`, `GET /tasks/:id`, `PATCH /tasks/:id` 🔒, `PATCH /tasks/:id/reorder` 🔒, `PATCH /tasks/:id/move` 🔒, `DELETE /tasks/:id` 200, `POST /tasks/:id/subtasks` 🔒 201, `GET /tasks/:id/subtasks`, `PATCH /tasks/:id/subtasks/:subtaskId/reorder`, `POST/DELETE /tasks/:id/assignees` 🔒 (201/200), `POST/DELETE /tasks/:id/labels` 🔒 (201/200) |
-| `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` 🔒 |
+| `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` 🔒 (`search` is full-text since JAV-34 — §6.11) |
+| — (Java-only, JAV-34) | `modules.search` | `GET /search/tasks?q&page&limit` 🔒 — ranked full-text search across the caller's projects, `PaginatedResponse` |
 | `comment` | `modules.comment` | `POST /tasks/:taskId/comments` 🔒 201, `GET /tasks/:taskId/comments`, `PATCH /comments/:id` 🔒, `DELETE /comments/:id` 🔒 204 |
 | `notification` (+ listener) | `modules.notification` | 🔒 `GET /notifications`, `GET /notifications/unread-count`, `PATCH /notifications/read`, `PATCH /notifications/read-all`, `DELETE /notifications/:id` 204 |
 | `activity` (+ listener) | `modules.activity` | `GET /tasks/:taskId/activities` 🔒 |
@@ -120,6 +122,7 @@ DTOs use, with the **same messages and ordering**:
 | `presence/presence.service.spec.ts` | `PresenceServiceTest` | 19 (incl. the concurrent-connect race) |
 | `presence/presence.controller.spec.ts` | `PresenceControllerTest` | 2 |
 | — (new) | `ClassValidatorTest`, `UtilsTest` | validation-message parity, durations, dates, sanitizer, email |
+| — (new, JAV-34) | `SearchServiceTest`, `BoardServiceTest` | membership scoping, blank query, ranked order, snippet escaping, pagination; board blank-search handling |
 
 Mocks follow the specs one-to-one: TypeORM repository mocks → Mockito mocks of the
 Spring Data repositories; `EventEmitter2` mock → `RecordingEventBus`
@@ -129,7 +132,7 @@ Assertions on query-builder internals (`select('col.project_id', …)`,
 `andWhere('user.is_active = true')`, `orIgnore()`) become assertions on the
 equivalent adapter/repository method calls.
 
-Run: `mvn test` (126 tests, no database required).
+Run: `mvn test` (222 tests, no database required).
 
 ## 5. Database
 
@@ -188,3 +191,9 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
    edge cases (IPv6 literals in the domain, some quoted local parts) may differ.
 10. **`ParseUUIDPipe`/`IsUUID` regexes** are copied verbatim, so `GET /users/me`
     still yields `400 Validation failed (uuid is expected)` exactly like Nest.
+11. **Board `search` is full-text (JAV-34).** Nest filtered with `title ILIKE '%term%'` (title
+    only, substring, sequential scan). The port matches whole words in title **and** description
+    via `tasks.search_vector @@ websearch_to_tsquery('simple', …)` (V4 generated column + GIN
+    index): `fo` no longer matches `foo`, descriptions are searchable, whitespace-only `search` is
+    ignored, and `search` longer than 200 characters is rejected with 400. `GET /search/tasks` is
+    a Java-only addition with no Nest counterpart (`docs/queries/search.md`).

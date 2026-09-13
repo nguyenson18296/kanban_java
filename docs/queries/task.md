@@ -44,6 +44,7 @@ JAV-20 only prepended the gate to them.
 | 6 | column_id of a task | `TaskRepository.findColumnIdRowById` | `PATCH /tasks/{id}/move` (activity payload) |
 | 7 | Task exists? | `TaskRepository.existsById` | reorder / reorder-subtask precheck |
 | 8 | Column by id | `KanbanColumnRepository.findById` | `POST /tasks`, `PATCH /tasks/{id}/move` |
+| 9 | Tasks by id, re-scoped to the caller's memberships, with assignees and labels | `TaskRepository.findByIdInForUserWithAssigneesAndLabels` | `GET /search/tasks` phase 2 (JAV-34) — see [search.md](search.md) query 4 |
 
 ## Queries
 
@@ -114,4 +115,19 @@ SELECT count(*) > 0 FROM tasks t WHERE t.id = :id;
 
 ```sql
 SELECT c.* FROM kanban_columns c WHERE c.id = :columnId;
+```
+
+### 9. Tasks by id, re-scoped to the caller's memberships (JAV-34)
+
+`TaskRepository.findByIdInForUserWithAssigneesAndLabels(ids, userId)` — relations assignees, labels
+via `@EntityGraph`. Only `SearchService` calls it, with the ranked ids of
+[search.md](search.md) query 3; the membership check is repeated here against the task's current
+column so a task moved out (or a membership revoked) between the two statements is not loaded.
+
+```sql
+SELECT t.*
+FROM tasks t
+WHERE t.id IN (:ids)
+  AND t.column_id IN (SELECT c.id FROM kanban_columns c
+                      WHERE c.project_id IN (SELECT m.project_id FROM project_members m WHERE m.user_id = :userId));
 ```

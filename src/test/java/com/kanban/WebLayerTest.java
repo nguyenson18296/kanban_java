@@ -14,6 +14,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kanban.common.api.ApiListResponse;
+import com.kanban.common.api.PaginatedResponse;
+import com.kanban.common.api.PaginationMeta;
 import com.kanban.common.exception.GlobalExceptionHandler;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
@@ -33,6 +35,8 @@ import com.kanban.modules.project.ProjectAccessService;
 import com.kanban.modules.project.ProjectMember;
 import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.project.guards.ProjectRoleInterceptor;
+import com.kanban.modules.search.SearchController;
+import com.kanban.modules.search.SearchService;
 import com.kanban.modules.team.TeamController;
 import com.kanban.modules.team.TeamService;
 import com.kanban.modules.user.User;
@@ -57,7 +61,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * contracts: validation error bodies, guard 401 body, pipe 400 body, unknown route 404.
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
-    BoardController.class, TeamController.class, LabelController.class})
+    BoardController.class, TeamController.class, LabelController.class, SearchController.class})
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     ProjectRoleInterceptor.class, AppService.class})
 class WebLayerTest {
@@ -86,6 +90,9 @@ class WebLayerTest {
 
   @MockitoBean
   private LabelService labelService;
+
+  @MockitoBean
+  private SearchService searchService;
 
   private void assertUnauthorized(MockHttpServletRequestBuilder request) throws Exception {
     mvc.perform(request)
@@ -254,6 +261,41 @@ class WebLayerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data").isArray());
     verify(projectAccessService).ensureRole("UrzWUH3e", "u1", ProjectRole.VIEWER);
+  }
+
+  @Test
+  @DisplayName("GET /search/tasks without token → 401 (JAV-34)")
+  void searchRequiresToken() throws Exception {
+    assertUnauthorized(get("/api/search/tasks?q=login"));
+    verifyNoInteractions(searchService);
+  }
+
+  @Test
+  @DisplayName("GET /search/tasks → PaginatedResponse shape { data, meta } with the caller id passed through")
+  void searchPaginatedShape() throws Exception {
+    authenticateU1();
+    when(searchService.searchTasks(any(), eq("u1")))
+        .thenReturn(new PaginatedResponse<>(List.of(), PaginationMeta.of(1, 20, 0)));
+
+    mvc.perform(get("/api/search/tasks?q=login").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(content().json("{\"data\":[],\"meta\":{\"page\":1,\"limit\":20,\"total\":0,\"totalPages\":0}}",
+            JsonCompareMode.STRICT));
+    verify(searchService).searchTasks(any(), eq("u1"));
+  }
+
+  @Test
+  @DisplayName("GET /search/tasks?limit=101 → ValidationPipe 400 before the service runs")
+  void searchQueryValidation() throws Exception {
+    authenticateU1();
+
+    mvc.perform(get("/api/search/tasks?q=login&limit=101").header("Authorization", "Bearer tok"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Bad Request"))
+        .andExpect(jsonPath("$.statusCode").value(400))
+        .andExpect(jsonPath("$.message[0]").value("limit must not be greater than 100"))
+        .andExpect(jsonPath("$.message.length()").value(1));
+    verifyNoInteractions(searchService);
   }
 
   @Test
