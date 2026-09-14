@@ -51,7 +51,7 @@ public class BoardService {
       BoardQueries.Filters filters = new BoardQueries.Filters(
           columnIds,
           query.priority == null ? null : query.priority.value(),
-          query.search == null || query.search.isEmpty() ? null : query.search,
+          query.search == null || query.search.isBlank() ? null : query.search,
           query.assigneeId == null || query.assigneeId.isEmpty() ? null : query.assigneeId,
           query.labelId == null || query.labelId == 0 ? null : query.labelId);
 

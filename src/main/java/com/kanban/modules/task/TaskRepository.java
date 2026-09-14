@@ -28,6 +28,18 @@ public interface TaskRepository extends JpaRepository<Task, String> {
   @Query("select t from Task t where t.parentId = :parentId order by t.position asc")
   List<Task> findSubtasksWithRelations(@Param("parentId") String parentId);
 
+  /**
+   * relations: assignees, labels — phase 2 of GET /search/tasks (ids arrive ranked from
+   * TaskSearchQueries). Re-applies the caller's CURRENT memberships against the task's CURRENT
+   * column, so a task moved out of the caller's projects, or a membership revoked, between the ranked
+   * query and this load is dropped instead of serialized.
+   */
+  @EntityGraph(attributePaths = {"assignees", "labels"})
+  @Query("select t from Task t where t.id in :ids and t.columnId in "
+      + "(select c.id from KanbanColumn c where c.projectId in "
+      + "(select m.projectId from ProjectMember m where m.userId = :userId))")
+  List<Task> findByIdInForUserWithAssigneesAndLabels(@Param("ids") List<String> ids, @Param("userId") String userId);
+
   /** select: id, parent_id */
   @Query("select t.parentId from Task t where t.id = :id")
   List<String> findParentIdRowById(@Param("id") String id);

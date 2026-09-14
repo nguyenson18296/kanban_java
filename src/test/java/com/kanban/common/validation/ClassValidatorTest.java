@@ -14,6 +14,7 @@ import com.kanban.modules.notification.dto.NotificationQueryDto;
 import com.kanban.modules.presence.dto.GetPresenceQueryDto;
 import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.project.dto.ManageProjectMembersDto;
+import com.kanban.modules.search.dto.TaskSearchQueryDto;
 import com.kanban.modules.task.TaskStatus;
 import com.kanban.modules.task.dto.CreateTaskDto;
 import com.kanban.modules.task.dto.UpdateTaskDto;
@@ -165,6 +166,32 @@ class ClassValidatorTest {
             "tasksPerColumn must not be greater than 200",
             "tasksPerColumn must not be less than 1",
             "tasksPerColumn must be an integer number"));
+    // JAV-34: search feeds websearch_to_tsquery, which errors on a single token ≥ 2047 bytes → cap it
+    assertThatThrownBy(() -> ClassValidator.validate(BoardQueryDto.class, Json.map("search", "x".repeat(201))))
+        .satisfies(e -> assertThat(messagesOf(e)).containsExactly("search must be shorter than or equal to 200 characters"));
+  }
+
+  @Test
+  @DisplayName("search query DTO: defaults, parseInt coercion, limit cap, q length cap (JAV-34)")
+  void searchQuery() {
+    TaskSearchQueryDto defaults = ClassValidator.validate(TaskSearchQueryDto.class, Map.of());
+    assertThat(defaults.q).isNull();
+    assertThat(defaults.page).isEqualTo(1);
+    assertThat(defaults.limit).isEqualTo(20);
+    TaskSearchQueryDto parsed = ClassValidator.validate(TaskSearchQueryDto.class,
+        Json.map("q", "login page", "page", "2", "limit", "50"));
+    assertThat(parsed.q).isEqualTo("login page");
+    assertThat(parsed.page).isEqualTo(2);
+    assertThat(parsed.limit).isEqualTo(50);
+    assertThatThrownBy(() -> ClassValidator.validate(TaskSearchQueryDto.class, Json.map("limit", "500")))
+        .satisfies(e -> assertThat(messagesOf(e)).containsExactly("limit must not be greater than 100"));
+    // @TypeNumber (not parseInt): a non-integer is rejected instead of being truncated to 1
+    assertThatThrownBy(() -> ClassValidator.validate(TaskSearchQueryDto.class, Json.map("limit", "1.5")))
+        .satisfies(e -> assertThat(messagesOf(e)).containsExactly("limit must be an integer number"));
+    assertThatThrownBy(() -> ClassValidator.validate(TaskSearchQueryDto.class, Json.map("q", "x".repeat(201))))
+        .satisfies(e -> assertThat(messagesOf(e)).containsExactly("q must be shorter than or equal to 200 characters"));
+    assertThatThrownBy(() -> ClassValidator.validate(TaskSearchQueryDto.class, Json.map("project_id", "UrzWUH3e")))
+        .satisfies(e -> assertThat(messagesOf(e)).containsExactly("property project_id should not exist"));
   }
 
   @Test
