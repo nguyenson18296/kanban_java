@@ -3,6 +3,17 @@
 spring:
   application:
     name: kanban-backend
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: ${REDIS_TIMEOUT:500ms}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:500ms}
+      repositories:
+        enabled: false
   config:
     import: "optional:file:.env[.properties]"
   datasource:
@@ -33,6 +44,11 @@ spring:
 
 server:
   port: ${PORT:1996}
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      # Match no proxies by default (including loopback/private networks).
+      internal-proxies: '${TRUSTED_PROXY_REGEX:(?!)}'
   error:
     whitelabel:
       enabled: false
@@ -40,6 +56,11 @@ server:
 # Application settings (env var names preserved from the Nest app)
 app:
   env: ${NODE_ENV:development}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:false}
+    max-requests: ${RATE_LIMIT_MAX_REQUESTS:10}
+    window: ${RATE_LIMIT_WINDOW:60s}
+    key-prefix: ${RATE_LIMIT_KEY_PREFIX:kanban:local:rate-limit}
   jwt:
     secret: ${JWT_SECRET}
     expires-in: ${JWT_EXPIRES_IN:1h}

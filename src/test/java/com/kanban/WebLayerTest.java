@@ -9,8 +9,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kanban.common.api.ApiListResponse;
@@ -18,9 +20,13 @@ import com.kanban.common.api.PaginatedResponse;
 import com.kanban.common.api.PaginationMeta;
 import com.kanban.common.exception.GlobalExceptionHandler;
 import com.kanban.common.exception.NotFoundException;
+import com.kanban.common.exception.ServiceUnavailableException;
+import com.kanban.common.exception.UnauthorizedException;
+import com.kanban.common.ratelimit.RedisRateLimiter;
 import com.kanban.common.json.Json;
 import com.kanban.config.JacksonConfig;
 import com.kanban.config.WebMvcConfig;
+import com.kanban.config.RateLimitConfig;
 import com.kanban.modules.auth.AuthController;
 import com.kanban.modules.auth.AuthService;
 import com.kanban.modules.auth.JwtService;
@@ -46,6 +52,7 @@ import com.kanban.modules.user.UserService;
 import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -61,14 +68,23 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * contracts: validation error bodies, guard 401 body, pipe 400 body, unknown route 404.
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
-    BoardController.class, TeamController.class, LabelController.class, SearchController.class})
+    BoardController.class, TeamController.class, LabelController.class, SearchController.class},
+    properties = "app.rate-limit.enabled=true")
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
-    ProjectRoleInterceptor.class, AppService.class})
+    ProjectRoleInterceptor.class, AppService.class, RateLimitConfig.class})
 class WebLayerTest {
   private static final String OTHER_USER_ID = "22222222-2222-4222-8222-222222222222";
 
   @Autowired
   private MockMvc mvc;
+
+  @MockitoBean
+  private RedisRateLimiter rateLimiter;
+
+  @BeforeEach
+  void allowLoginRequests() {
+    when(rateLimiter.retryAfterSeconds(any(), any())).thenReturn(0L);
+  }
 
   @MockitoBean
   private AuthService authService;
@@ -341,6 +357,7 @@ class WebLayerTest {
         .andExpect(jsonPath("$.error").value("Bad Request"))
         .andExpect(jsonPath("$.statusCode").value(400))
         .andExpect(jsonPath("$.message", Matchers.instanceOf(String.class)));
+    verify(rateLimiter).retryAfterSeconds("login", "127.0.0.1");
   }
 
   @Test
@@ -355,5 +372,77 @@ class WebLayerTest {
         .andExpect(jsonPath("$.access_token").value("at"))
         .andExpect(jsonPath("$.user.role").value("qa"))
         .andExpect(jsonPath("$.user.avatar_url").value(Matchers.nullValue()));
+  }
+
+  @Test
+  void loginQuotaExceededBeforeBodyValidation() throws Exception {
+    when(rateLimiter.retryAfterSeconds("login", "127.0.0.1")).thenReturn(2L);
+    mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content("{bad json"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(header().string("Retry-After", "2"))
+        .andExpect(content().json("""
+            {"message":"Too many login requests. Please try again later.",
+             "error":"Too Many Requests","statusCode":429}
+            """, JsonCompareMode.STRICT));
+    verifyNoInteractions(authService);
+  }
+
+  @Test
+  void redisUnavailableDoesNotAttemptLoginOrExposeDetails() throws Exception {
+    when(rateLimiter.retryAfterSeconds(any(), any())).thenThrow(
+        new ServiceUnavailableException("Login temporarily unavailable. Please try again later."));
+    mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"a@b.co\",\"password\":\"secret\"}"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(header().doesNotExist("Retry-After"))
+        .andExpect(content().json("""
+            {"message":"Login temporarily unavailable. Please try again later.",
+             "error":"Service Unavailable","statusCode":503}
+            """, JsonCompareMode.STRICT));
+    verifyNoInteractions(authService);
+  }
+
+  @Test
+  void failedLoginStillConsumesQuotaAndRetains401() throws Exception {
+    when(authService.login(any(), any(), any())).thenThrow(new UnauthorizedException("Invalid credentials"));
+    mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"a@b.co\",\"password\":\"wrong\"}"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.message").value("Invalid credentials"));
+    verify(rateLimiter).retryAfterSeconds("login", "127.0.0.1");
+  }
+
+  @Test
+  void forwardedHeadersAreNotReadByTheInterceptor() throws Exception {
+    mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content("{}")
+            .header("X-Forwarded-For", "203.0.113.99")
+            .header("Forwarded", "for=203.0.113.98"))
+        .andExpect(status().isBadRequest());
+    verify(rateLimiter).retryAfterSeconds("login", "127.0.0.1");
+  }
+
+  @Test
+  void otherRoutesDoNotConsumeLoginQuota() throws Exception {
+    mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api")).andExpect(status().isOk());
+    verifyNoInteractions(rateLimiter);
+  }
+
+  @Test
+  void corsExposesRetryAfter() throws Exception {
+    when(rateLimiter.retryAfterSeconds(any(), any())).thenReturn(1L);
+    mvc.perform(post("/api/auth/login").header("Origin", "https://frontend.example")
+            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(header().string("Access-Control-Expose-Headers", "Retry-After"));
+  }
+
+  @Test
+  void corsPreflightDoesNotConsumeQuota() throws Exception {
+    mvc.perform(options("/api/auth/login").header("Origin", "https://frontend.example")
+            .header("Access-Control-Request-Method", "POST"))
+        .andExpect(status().isOk());
+    verifyNoInteractions(rateLimiter, authService);
   }
 }
