@@ -20,6 +20,7 @@ including its quirks.
 | `HttpException` family + default filter | `@nestjs/common` | `common/exception/*` — same `createBody` rules; `GlobalExceptionHandler` renders identical bodies, unknown routes → `Cannot GET /api/x`, unhandled → `{ statusCode: 500, message: "Internal server error" }` |
 | `@UseGuards(JwtAuthGuard)` (opt-in per route) | passport-jwt | `@JwtAuth` (method or class) + `JwtAuthInterceptor`; failure body `{ message: "Unauthorized", statusCode: 401 }` |
 | `@CurrentUser()` / `@CurrentUser('id')` | param decorator | `@CurrentUser` / `@CurrentUser("id")` + `CurrentUserResolver` |
+| Login rate limiting (Java-only, JAV-37; opt-in) | — | `@RateLimited("login")` + MVC interceptor + Redis atomic Lua counter/TTL; 429 with `Retry-After`, 503 on Redis failure |
 | `JwtService` (HS256, `expiresIn` ms-grammar) | `@nestjs/jwt` | `JwtService` (auth0 java-jwt) + `DurationParser`; same claims `sub`, `email`, `role`, `iat`, `exp` — tokens are interchangeable between the two apps when `JWT_SECRET` matches |
 | bcryptjs (`$2b$`, cost 10) | bcryptjs | `BCryptPasswordEncoder($2B, 10)` — hashes verify across both apps |
 | TypeORM entities / repositories | `@nestjs/typeorm` | JPA entities + Spring Data repositories (one per entity, same table/column names) |
@@ -132,7 +133,13 @@ Assertions on query-builder internals (`select('col.project_id', …)`,
 `andWhere('user.is_active = true')`, `orIgnore()`) become assertions on the
 equivalent adapter/repository method calls.
 
-Run: `mvn test` (222 tests, no database required).
+JAV-37 adds `RedisRateLimiterTest`, `RateLimitConfigTest` and `WebLayerTest` cases
+for quota responses, disabled mode, IP normalization and counting before validation.
+`RedisRateLimiterIT` and `LoginRateLimitHttpIT` cover real Redis concurrency/expiry,
+two HTTP instances/restart, proxy trust, Redis timeouts and disabled login.
+
+Run: `mvn test` (no external services required). Redis integration tests are opt-in:
+`mvn -Predis-it verify` against a running local Redis; no PostgreSQL required.
 
 ## 5. Database
 
@@ -197,3 +204,13 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
     index): `fo` no longer matches `foo`, descriptions are searchable, whitespace-only `search` is
     ignored, and `search` longer than 200 characters is rejected with 400. `GET /search/tasks` is
     a Java-only addition with no Nest counterpart (`docs/queries/search.md`).
+12. **Login rate limiting (JAV-37).** Disabled by default. With `RATE_LIMIT_ENABLED=true`,
+    requests mapped to `POST /auth/login` consume a per-IP Redis quota before body
+    validation or auth processing (default 10 requests in a 60-second window starting
+    with the first request). Over quota returns Nest-shaped 429 plus `Retry-After`;
+    Redis errors return generic 503. Existing responses remain unchanged within quota.
+    CORS exposes `Retry-After`. Tomcat resolves forwarded addresses only for proxies
+    matching `TRUSTED_PROXY_REGEX` (matches none by default). This also affects
+    `getRemoteAddr()` in auth's informational IP column when proxy trust is configured.
+    No PostgreSQL schema changes. Contract and experiments:
+    `docs/api-contracts/login-rate-limit.md`.

@@ -27,6 +27,13 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 public class GlobalExceptionHandler {
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+  @ExceptionHandler(TooManyRequestsException.class)
+  public ResponseEntity<Object> handleTooManyRequests(TooManyRequestsException ex) {
+    return ResponseEntity.status(ex.getStatus())
+        .header("Retry-After", Long.toString(ex.getRetryAfterSeconds()))
+        .body(ex.toBody());
+  }
+
   @ExceptionHandler(HttpException.class)
   public ResponseEntity<Object> handleHttpException(HttpException ex) {
     return ResponseEntity.status(ex.getStatus()).body(ex.toBody());

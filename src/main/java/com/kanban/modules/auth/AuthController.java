@@ -1,6 +1,7 @@
 package com.kanban.modules.auth;
 
 import com.kanban.common.json.Json;
+import com.kanban.common.ratelimit.RateLimited;
 import com.kanban.common.validation.ValidatedBody;
 import com.kanban.modules.auth.decorators.CurrentUser;
 import com.kanban.modules.auth.dto.AuthResponseDto;
@@ -10,6 +11,8 @@ import com.kanban.modules.auth.dto.RegisterDto;
 import com.kanban.modules.auth.guards.JwtAuth;
 import com.kanban.modules.user.User;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -42,9 +45,15 @@ public class AuthController {
   }
 
   @PostMapping("/login")
+  @RateLimited("login")
   @Operation(summary = "Login with email and password")
   @ApiResponse(responseCode = "200", description = "Login successful")
   @ApiResponse(responseCode = "401", description = "Invalid credentials")
+  @ApiResponse(responseCode = "429", description = "Login quota exceeded",
+      headers = @Header(name = "Retry-After",
+          description = "Seconds until the current rate limit window ends",
+          schema = @Schema(type = "integer")))
+  @ApiResponse(responseCode = "503", description = "Login rate limiter unavailable")
   public AuthResponseDto login(@ValidatedBody LoginDto dto, HttpServletRequest req) {
     return authService.login(dto, req.getRemoteAddr(), req.getHeader("user-agent"));
   }

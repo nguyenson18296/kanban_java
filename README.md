@@ -58,16 +58,45 @@ mvn -DskipTests package && java -jar target/kanban-backend-1.0.0.jar
 - Task search: `GET /api/search/tasks` — request/response contract and frontend integration: [`docs/api-contracts/task-search.md`](docs/api-contracts/task-search.md)
 - Socket.IO: `http://localhost:1997` (clients: `io('http://localhost:1997', { auth: { token } })`) — full message contract for frontend integration: [`docs/api-contracts/socket-events.md`](docs/api-contracts/socket-events.md)
 
+## Redis login rate limiting (JAV-37)
+
+Optional; disabled by default so the existing application needs no Redis. To try it:
+
+```bash
+docker compose -f compose.redis.yml up -d --wait
+RATE_LIMIT_ENABLED=true mvn spring-boot:run
+```
+
+`POST /api/auth/login` admits 10 requests per IP per 60-second window. Request 11
+returns **429** with `Retry-After`; Redis failure while enabled returns **503**.
+Invalid login bodies also consume quota. Other endpoints are unaffected.
+
+Configure `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW`, `RATE_LIMIT_KEY_PREFIX`
+and the `REDIS_*` settings in `.env.example`. All instances sharing quota must use
+the same Redis database, key prefix and quota settings. Forwarded client IPs are
+trusted only from an explicitly configured `TRUSTED_PROXY_REGEX` (default: none).
+
+The [learning guide and HTTP contract](docs/api-contracts/login-rate-limit.md)
+cover counters, TTL, atomic Lua, curl examples, proxy setup and the two-backend experiment.
+
 ## Test
 
 ```bash
 mvn test                                    # everything
 mvn test -Dtest=TaskServiceTest             # one class
+mvn -Predis-it verify                       # opt-in Redis + real HTTP integration tests
 ```
 
 Tests are plain JUnit 5 + Mockito unit tests (no database needed); `WebLayerTest`
 boots the MVC layer with MockMvc to pin the wire format (validation messages, guard
 401 body, pipe 400 body, unknown-route 404).
+
+Normal `mvn test` needs neither PostgreSQL nor Redis. The `redis-it` profile requires
+a running local Redis (the Compose command above); override its address with
+`-Dredis.it.host=127.0.0.1 -Dredis.it.port=6379`. It uses unique test keys and cleans
+them up without `FLUSHDB`. HTTP integration tests start isolated Tomcat instances
+on random ports with a mocked auth service; they do not access PostgreSQL or load
+the developer's `.env`. See the learning guide for the scenarios covered.
 
 ## Project layout
 

@@ -45,6 +45,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         .allowedOrigins("*")
         .allowedMethods("GET", "HEAD", "PUT", "PATCH", "POST", "DELETE")
         .allowedHeaders("*")
+        .exposedHeaders("Retry-After")
         .allowCredentials(false);
   }
 
