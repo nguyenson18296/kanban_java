@@ -15,7 +15,9 @@ public enum TaskActivityAction implements WireEnum {
   TASK_LABEL_ADDED("task_label_added"),
   TASK_LABEL_REMOVED("task_label_removed"),
   TASK_MOVED("task_moved"),
-  TASK_REORDERED("task_reordered");
+  TASK_REORDERED("task_reordered"),
+  TASK_DEPENDENCY_ADDED("task_dependency_added"),
+  TASK_DEPENDENCY_REMOVED("task_dependency_removed");
 
   private final String value;
 

@@ -35,6 +35,10 @@ import com.kanban.modules.auth.interfaces.JwtPayload;
 import com.kanban.modules.board.BoardController;
 import com.kanban.modules.board.BoardService;
 import com.kanban.modules.board.dto.BoardResponse;
+import com.kanban.modules.dependency.DependencyController;
+import com.kanban.modules.dependency.DependencyService;
+import com.kanban.modules.dependency.dto.TaskDependenciesResponseDto;
+import com.kanban.modules.dependency.dto.TaskSummaryDto;
 import com.kanban.modules.label.LabelController;
 import com.kanban.modules.label.LabelService;
 import com.kanban.modules.project.ProjectAccessService;
@@ -43,6 +47,7 @@ import com.kanban.modules.project.ProjectRole;
 import com.kanban.modules.project.guards.ProjectRoleInterceptor;
 import com.kanban.modules.search.SearchController;
 import com.kanban.modules.search.SearchService;
+import com.kanban.modules.task.TaskStatus;
 import com.kanban.modules.team.TeamController;
 import com.kanban.modules.team.TeamService;
 import com.kanban.modules.user.User;
@@ -68,7 +73,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * contracts: validation error bodies, guard 401 body, pipe 400 body, unknown route 404.
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
-    BoardController.class, TeamController.class, LabelController.class, SearchController.class},
+    BoardController.class, TeamController.class, LabelController.class, SearchController.class,
+    DependencyController.class},
     properties = "app.rate-limit.enabled=true")
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     ProjectRoleInterceptor.class, AppService.class, RateLimitConfig.class})
@@ -109,6 +115,9 @@ class WebLayerTest {
 
   @MockitoBean
   private SearchService searchService;
+
+  @MockitoBean
+  private DependencyService dependencyService;
 
   private void assertUnauthorized(MockHttpServletRequestBuilder request) throws Exception {
     mvc.perform(request)
@@ -444,5 +453,106 @@ class WebLayerTest {
             .header("Access-Control-Request-Method", "POST"))
         .andExpect(status().isOk());
     verifyNoInteractions(rateLimiter, authService);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task dependencies (JSP-33)
+  // ---------------------------------------------------------------------------
+
+  private static final String TASK_ID = "33333333-3333-4333-8333-333333333333";
+  private static final String BLOCKER_ID = "44444444-4444-4444-8444-444444444444";
+  private static final String DEPS_URL = "/api/tasks/" + TASK_ID + "/dependencies";
+  private static final String DEPS_BODY = "{\"blocked_by_ids\":[\"" + BLOCKER_ID + "\"]}";
+
+  private static TaskDependenciesResponseDto sampleDependencies() {
+    return new TaskDependenciesResponseDto(
+        List.of(new TaskSummaryDto(BLOCKER_ID, "KAN-12", "Design schema", TaskStatus.IN_PROGRESS, 3)),
+        List.of());
+  }
+
+  @Test
+  @DisplayName("dependency routes without a token → 401 on all three")
+  void dependenciesRequireToken() throws Exception {
+    assertUnauthorized(get(DEPS_URL));
+    assertUnauthorized(post(DEPS_URL).contentType(MediaType.APPLICATION_JSON).content(DEPS_BODY));
+    assertUnauthorized(delete(DEPS_URL).contentType(MediaType.APPLICATION_JSON).content(DEPS_BODY));
+    verifyNoInteractions(dependencyService);
+  }
+
+  @Test
+  @DisplayName("POST /tasks/:id/dependencies → 201 with both directions")
+  void addDependencies() throws Exception {
+    authenticateU1();
+    when(dependencyService.add(TASK_ID, List.of(BLOCKER_ID), "u1")).thenReturn(sampleDependencies());
+
+    mvc.perform(post(DEPS_URL).header("Authorization", "Bearer tok")
+            .contentType(MediaType.APPLICATION_JSON).content(DEPS_BODY))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.blocked_by[0].ticket_id").value("KAN-12"))
+        .andExpect(jsonPath("$.blocked_by[0].status").value("in_progress"))
+        .andExpect(jsonPath("$.blocked_by[0].column_id").value(3))
+        .andExpect(jsonPath("$.blocks.length()").value(0));
+  }
+
+  @Test
+  @DisplayName("GET /tasks/:id/dependencies → 200 with both directions")
+  void listDependencies() throws Exception {
+    authenticateU1();
+    when(dependencyService.list(TASK_ID, "u1")).thenReturn(sampleDependencies());
+
+    mvc.perform(get(DEPS_URL).header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.blocked_by[0].id").value(BLOCKER_ID))
+        .andExpect(jsonPath("$.blocks").isArray());
+  }
+
+  @Test
+  @DisplayName("DELETE /tasks/:id/dependencies → 204 with no body")
+  void removeDependencies() throws Exception {
+    authenticateU1();
+
+    mvc.perform(delete(DEPS_URL).header("Authorization", "Bearer tok")
+            .contentType(MediaType.APPLICATION_JSON).content(DEPS_BODY))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+    verify(dependencyService).remove(TASK_ID, List.of(BLOCKER_ID), "u1");
+  }
+
+  @Test
+  @DisplayName("empty blocked_by_ids → ValidationPipe 400 body")
+  void dependenciesValidation() throws Exception {
+    authenticateU1();
+
+    mvc.perform(post(DEPS_URL).header("Authorization", "Bearer tok")
+            .contentType(MediaType.APPLICATION_JSON).content("{\"blocked_by_ids\":[]}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Bad Request"))
+        .andExpect(jsonPath("$.statusCode").value(400));
+    verifyNoInteractions(dependencyService);
+  }
+
+  @Test
+  @DisplayName("malformed task uuid → pipe 400, service untouched")
+  void dependenciesUuidPipe() throws Exception {
+    authenticateU1();
+
+    mvc.perform(get("/api/tasks/not-a-uuid/dependencies").header("Authorization", "Bearer tok"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().json(
+            "{\"message\":\"Validation failed (uuid is expected)\",\"error\":\"Bad Request\",\"statusCode\":400}",
+            JsonCompareMode.STRICT));
+    verifyNoInteractions(dependencyService);
+  }
+
+  @Test
+  @DisplayName("non-member → masked task 404, never 403")
+  void dependenciesNonMemberMasked404() throws Exception {
+    authenticateU1();
+    when(dependencyService.list(TASK_ID, "u1")).thenThrow(new NotFoundException(Json.map(
+        "statusCode", 404, "message", "Task with id \"" + TASK_ID + "\" not found")));
+
+    mvc.perform(get(DEPS_URL).header("Authorization", "Bearer tok"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Task with id \"" + TASK_ID + "\" not found"));
   }
 }

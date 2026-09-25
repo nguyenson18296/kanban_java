@@ -16,6 +16,8 @@ public final class ActivityEvents {
   public static final String TASK_LABEL_REMOVED = "activity.task.label_removed";
   public static final String TASK_MOVED = "activity.task.moved";
   public static final String TASK_REORDERED = "activity.task.reordered";
+  public static final String TASK_DEPENDENCY_ADDED = "activity.task.dependency_added";
+  public static final String TASK_DEPENDENCY_REMOVED = "activity.task.dependency_removed";
 
   public static String nameOf(TaskActivityAction action) {
     return switch (action) {
@@ -31,6 +33,8 @@ public final class ActivityEvents {
       case TASK_LABEL_REMOVED -> TASK_LABEL_REMOVED;
       case TASK_MOVED -> TASK_MOVED;
       case TASK_REORDERED -> TASK_REORDERED;
+      case TASK_DEPENDENCY_ADDED -> TASK_DEPENDENCY_ADDED;
+      case TASK_DEPENDENCY_REMOVED -> TASK_DEPENDENCY_REMOVED;
     };
   }
 }

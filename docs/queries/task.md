@@ -9,6 +9,10 @@ gates with `ensureRole` on its project (query 1), and `GET /tasks` scopes by the
 project ids (query 3) instead of gating. Reads require `viewer`, mutations `member`;
 non-members get a masked task-flavored 404 (anti-enumeration).
 
+Deleting a task also removes its dependency edges, through `ON DELETE CASCADE` on both
+`task_dependencies` foreign keys (JSP-33) — no query in this module participates. See
+[dependency.md](dependency.md).
+
 Mutation internals (save-then-refetch graphs, junction-table writes, the
 `fn_move_task` / `fn_reorder_task` / `fn_reorder_subtask` stored procedures behind
 `JpaTaskPositionFunctions`) are not documented yet — add them here when those paths change;
