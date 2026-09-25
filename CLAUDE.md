@@ -161,8 +161,8 @@ Auto-load by description. The three Spring references are **generic** — where 
 
 Repo-specific:
 
-- **`writing-feature-docs`** — `/writing-feature-docs <module | feature | current diff>` writes the Notion-ready feature document to `docs/features/<feature>.md` (15-section template in the skill) from the code, Flyway migrations, `docs/queries/*` and `docs/api-contracts/*`. It documents only — it never changes code or other docs.
-
+- **`writing-feature-docs`** — `/writing-feature-docs <module | feature | current diff>` writes a **short, plain-language** Notion-ready feature doc to `docs/features/<feature>.md` (8-section template in the skill, ~150-line budget, written for engineers new to the codebase) from the code, Flyway migrations, `docs/queries/*` and `docs/api-contracts/*`; deep detail is linked, never restated. It documents only — it never changes code or other docs.
+- **`writing-api-contracts`** — `/writing-api-contracts <endpoint | feature | current diff>` writes the frontend HTTP contract to `docs/api-contracts/<feature>.md` (template modeled on `task-search.md`: summary table, changelog, full request/response payloads with TS types, verbatim error bodies, integration rules). Socket.IO changes update `socket-events.md` in place instead. Documents only.
 ## Known Decisions (not yet settled)
 
 Contract/scaffolding choices, not existing conventions — confirm before relying on them: unifying the response envelope; API versioning; standardizing DELETE on 204; fail-fast env validation beyond `JWT_SECRET`; security hardening (CORS allowlist replacing `origin:*`, body-size limit, guarding the remaining public routes); the full RBAC rollout in `2026-08-22-project-membership-rbac.md`.
