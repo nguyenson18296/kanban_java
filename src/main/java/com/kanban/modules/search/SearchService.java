@@ -61,7 +61,7 @@ public class SearchService {
     if (!hits.isEmpty()) {
       List<String> ids = hits.stream().map(Hit::taskId).toList();
       for (Task task : taskRepository.findByIdInForUserWithAssigneesAndLabels(ids, userId)) {
-        tasksById.put(task.getId(), task);
+        tasksById.put(task.getId(), task); // task.getId() = key, task = value
       }
     }
     List<Map<String, Object>> items = new ArrayList<>();

@@ -28,6 +28,7 @@ including its quirks.
 | Raw project lookups in `ProjectAccessService` | query builder | `ProjectAccessQueries` (`JpaProjectAccessQueries`) |
 | Board count / ROW_NUMBER queries | query builder | `BoardQueries` (`JpaBoardQueries`) |
 | Task full-text search (Java-only, JAV-34) | — | `TaskSearchQueries` (`JpaTaskSearchQueries`); `TaskSearchSql` shares the predicate with `JpaBoardQueries` |
+| Task dependency graph (Java-only, JSP-33) | — | `DependencyQueries` (`JpaDependencyQueries`) — `WITH RECURSIVE` reachability walk for the cycle check, plus a per-project `pg_advisory_xact_lock` |
 | `EventEmitter2.emit` + `@OnEvent` | `@nestjs/event-emitter` | `EventBus` (`SpringEventBus` → `ApplicationEventPublisher`) + `@Async @EventListener` on typed payloads (`eventExecutor` pool). Fire-and-forget, like Nest |
 | Socket.IO gateway | `@nestjs/platform-socket.io` | netty-socketio (`NettySocketIoServer`) behind `SocketServer`/`SocketClient` adapters; `EventsGateway`, `EventsService`, `WsJwtGuard` ported 1:1 |
 | Migrations (`src/migrations`, never executed — `synchronize` was on) | TypeORM | Flyway `V1__baseline_schema.sql` (schema + stored procedures + trigger). `synchronize` has no equivalent and is intentionally not reproduced |
@@ -50,6 +51,7 @@ guards and response shapes are identical.
 | `kanban-column` | `modules.kanbancolumn` | `POST /columns` 201, `GET /columns`, `GET /columns/:id`, `PATCH /columns/:id`, `DELETE /columns/:id` 200 |
 | `label` | `modules.label` | `POST /labels` 201, `GET /labels`, `GET /labels/:id`, `PATCH /labels/:id`, `DELETE /labels/:id` 200 |
 | `task` | `modules.task` | `POST /tasks` 🔒 201, `GET /tasks`, `GET /tasks/by-ticket/:ticketId`, `GET /tasks/:id`, `PATCH /tasks/:id` 🔒, `PATCH /tasks/:id/reorder` 🔒, `PATCH /tasks/:id/move` 🔒, `DELETE /tasks/:id` 200, `POST /tasks/:id/subtasks` 🔒 201, `GET /tasks/:id/subtasks`, `PATCH /tasks/:id/subtasks/:subtaskId/reorder`, `POST/DELETE /tasks/:id/assignees` 🔒 (201/200), `POST/DELETE /tasks/:id/labels` 🔒 (201/200) |
+| — (Java-only, JSP-33) | `modules.dependency` | 🔒 `POST /tasks/:id/dependencies` 201, `DELETE /tasks/:id/dependencies` 204, `GET /tasks/:id/dependencies` — directed blocks/blocked-by edges with server-side cycle prevention (§6.13) |
 | `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` 🔒 (`search` is full-text since JAV-34 — §6.11) |
 | — (Java-only, JAV-34) | `modules.search` | `GET /search/tasks?q&page&limit` 🔒 — ranked full-text search across the caller's projects, `PaginatedResponse` |
 | `comment` | `modules.comment` | `POST /tasks/:taskId/comments` 🔒 201, `GET /tasks/:taskId/comments`, `PATCH /comments/:id` 🔒, `DELETE /comments/:id` 🔒 204 |
@@ -124,6 +126,7 @@ DTOs use, with the **same messages and ordering**:
 | `presence/presence.controller.spec.ts` | `PresenceControllerTest` | 2 |
 | — (new) | `ClassValidatorTest`, `UtilsTest` | validation-message parity, durations, dates, sanitizer, email |
 | — (new, JAV-34) | `SearchServiceTest`, `BoardServiceTest` | membership scoping, blank query, ranked order, snippet escaping, pagination; board blank-search handling |
+| — (new, JSP-33) | `DependencyServiceTest` | transitive + direct cycles, self-reference, all-or-nothing rejection, advisory-lock ordering, masked 404 targets, viewer 403, activity diffing; `WebLayerTest` adds the three routes' status codes and validation bodies |
 
 Mocks follow the specs one-to-one: TypeORM repository mocks → Mockito mocks of the
 Spring Data repositories; `EventEmitter2` mock → `RecordingEventBus`
@@ -155,6 +158,10 @@ contains `user_id`).
 
 Against an existing Nest-created database, start once with
 `FLYWAY_BASELINE_ON_MIGRATE=true` (or apply the idempotent script manually).
+
+`V5__create_task_dependencies.sql` (JSP-33) adds the `task_dependencies` edge table and two
+`task_activity_action` enum values. It has no Nest counterpart — the Nest schema has no
+dependency table.
 
 JDBC URL detail: the datasource URL carries `stringtype=unspecified` so that the
 `String`-typed uuid ids and the snake_case enum values (bound through JPA
@@ -214,3 +221,18 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
     `getRemoteAddr()` in auth's informational IP column when proxy trust is configured.
     No PostgreSQL schema changes. Contract and experiments:
     `docs/api-contracts/login-rate-limit.md`.
+
+13. **Task dependencies (JSP-33).** A Java-only feature with no Nest counterpart: three
+    routes on the task resource (`POST`/`DELETE`/`GET /tasks/:id/dependencies`) over a new
+    `task_dependencies` table of directed edges, where one row means `blocking_task_id`
+    blocks `blocked_task_id`. Writes require `member`, reads `viewer`, both through
+    `ProjectAccessService.ensureTaskRole`; non-members get the masked task-flavored 404.
+    A `WITH RECURSIVE` walk rejects any edge that would close a cycle — transitively, not
+    just directly — and the same walk catches self-reference, both as 409. Unknown, deleted
+    and cross-project dependency targets are collapsed into one 404, so the response cannot
+    confirm a task exists in a project the caller cannot see; cross-project dependencies are
+    out of scope. A per-project `pg_advisory_xact_lock` closes the check-then-insert race.
+    Adding or removing edges records `task_dependency_added` / `task_dependency_removed`
+    activity. Dependencies are deliberately absent from the task and board payloads, no
+    Socket.IO event is emitted, and a task can still move to `done` with unfinished
+    blockers — all tracked separately. Queries: `docs/queries/dependency.md`.
