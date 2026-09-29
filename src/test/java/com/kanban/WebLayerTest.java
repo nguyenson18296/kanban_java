@@ -1,12 +1,15 @@
 package com.kanban;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
@@ -18,15 +21,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.kanban.common.api.ApiListResponse;
 import com.kanban.common.api.PaginatedResponse;
 import com.kanban.common.api.PaginationMeta;
+import com.kanban.common.exception.BadRequestException;
 import com.kanban.common.exception.GlobalExceptionHandler;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.exception.ServiceUnavailableException;
 import com.kanban.common.exception.UnauthorizedException;
+import com.kanban.common.exception.UnsupportedMediaTypeException;
 import com.kanban.common.ratelimit.RedisRateLimiter;
 import com.kanban.common.json.Json;
 import com.kanban.config.JacksonConfig;
 import com.kanban.config.WebMvcConfig;
 import com.kanban.config.RateLimitConfig;
+import com.kanban.modules.attachment.AttachmentController;
+import com.kanban.modules.attachment.AttachmentService;
+import com.kanban.modules.attachment.TaskAttachment;
+import com.kanban.modules.attachment.dto.DownloadUrlDto;
 import com.kanban.modules.auth.AuthController;
 import com.kanban.modules.auth.AuthService;
 import com.kanban.modules.auth.JwtService;
@@ -54,19 +63,25 @@ import com.kanban.modules.user.User;
 import com.kanban.modules.user.UserController;
 import com.kanban.modules.user.UserRole;
 import com.kanban.modules.user.UserService;
+import java.time.Instant;
 import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * Port of test/app.e2e-spec.ts (GET / → "Hello World!") plus the Nest wire-format
@@ -74,7 +89,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
     BoardController.class, TeamController.class, LabelController.class, SearchController.class,
-    DependencyController.class},
+    DependencyController.class, AttachmentController.class},
     properties = "app.rate-limit.enabled=true")
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     ProjectRoleInterceptor.class, AppService.class, RateLimitConfig.class})
@@ -118,6 +133,9 @@ class WebLayerTest {
 
   @MockitoBean
   private DependencyService dependencyService;
+
+  @MockitoBean
+  private AttachmentService attachmentService;
 
   private void assertUnauthorized(MockHttpServletRequestBuilder request) throws Exception {
     mvc.perform(request)
@@ -554,5 +572,180 @@ class WebLayerTest {
     mvc.perform(get(DEPS_URL).header("Authorization", "Bearer tok"))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.message").value("Task with id \"" + TASK_ID + "\" not found"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task attachments (JSP-40)
+  // ---------------------------------------------------------------------------
+
+  private static final String ATTACHMENT_ID = "55555555-5555-4555-8555-555555555555";
+  private static final String ATTACHMENTS_URL = "/api/tasks/" + TASK_ID + "/attachments";
+  private static final String ATTACHMENT_URL = ATTACHMENTS_URL + "/" + ATTACHMENT_ID;
+
+  private static TaskAttachment sampleAttachment() {
+    TaskAttachment a = new TaskAttachment(TASK_ID, "u1", "login-bug.png", "image/png", 482133L,
+        "tasks/" + TASK_ID + "/k");
+    a.setId(ATTACHMENT_ID);
+    a.setCreatedAt(Instant.parse("2026-09-26T10:00:00Z"));
+    a.setUploader(new User("u1", "a@b.co", "A", UserRole.BACKEND_DEVELOPER, null, true));
+    return a;
+  }
+
+  private static MockMultipartFile samplePng() {
+    return new MockMultipartFile("file", "login-bug.png", "image/png", new byte[] {(byte) 0x89, 'P', 'N', 'G'});
+  }
+
+  @Test
+  @DisplayName("attachment routes without a token → 401 on all four")
+  void attachmentsRequireToken() throws Exception {
+    assertUnauthorized(multipart(ATTACHMENTS_URL).file(samplePng()));
+    assertUnauthorized(get(ATTACHMENTS_URL));
+    assertUnauthorized(get(ATTACHMENT_URL + "/download"));
+    assertUnauthorized(delete(ATTACHMENT_URL));
+    verifyNoInteractions(attachmentService);
+  }
+
+  @Test
+  @DisplayName("POST /tasks/:taskId/attachments (multipart) → 201 with the attachment, storage_key hidden")
+  void uploadAttachment() throws Exception {
+    authenticateU1();
+    when(attachmentService.upload(eq(TASK_ID), any(MultipartFile.class), eq("u1"))).thenReturn(sampleAttachment());
+
+    mvc.perform(multipart(ATTACHMENTS_URL).file(samplePng()).header("Authorization", "Bearer tok"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.id").value(ATTACHMENT_ID))
+        .andExpect(jsonPath("$.task_id").value(TASK_ID))
+        .andExpect(jsonPath("$.file_name").value("login-bug.png"))
+        .andExpect(jsonPath("$.content_type").value("image/png"))
+        .andExpect(jsonPath("$.size_bytes").value(482133))
+        .andExpect(jsonPath("$.uploaded_by.id").value("u1"))
+        .andExpect(jsonPath("$.created_at").value("2026-09-26T10:00:00.000Z"))
+        .andExpect(jsonPath("$.storage_key").doesNotExist());
+    ArgumentCaptor<MultipartFile> file = ArgumentCaptor.forClass(MultipartFile.class);
+    verify(attachmentService).upload(eq(TASK_ID), file.capture(), eq("u1"));
+    assertThat(file.getValue().getOriginalFilename()).isEqualTo("login-bug.png");
+  }
+
+  @Test
+  @DisplayName("POST without multipart → the service receives file = null (its 400 body is returned)")
+  void uploadWithoutMultipart() throws Exception {
+    authenticateU1();
+    when(attachmentService.upload(eq(TASK_ID), isNull(), eq("u1")))
+        .thenThrow(new BadRequestException("File is required"));
+
+    mvc.perform(post(ATTACHMENTS_URL).header("Authorization", "Bearer tok")
+            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().json(
+            "{\"message\":\"File is required\",\"error\":\"Bad Request\",\"statusCode\":400}",
+            JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("Spring's MaxUploadSizeExceededException → the same 413 body the service throws")
+  void uploadTooLargeHandler() throws Exception {
+    authenticateU1();
+    when(attachmentService.upload(eq(TASK_ID), any(), eq("u1"))).thenThrow(new MaxUploadSizeExceededException(-1));
+
+    mvc.perform(multipart(ATTACHMENTS_URL).file(samplePng()).header("Authorization", "Bearer tok"))
+        .andExpect(status().is(413))
+        .andExpect(content().json(
+            "{\"message\":\"File is too large. The maximum size is 10 MB.\",\"error\":\"Payload Too Large\","
+                + "\"statusCode\":413}",
+            JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("disallowed type → 415 body")
+  void uploadTypeNotAllowed() throws Exception {
+    authenticateU1();
+    when(attachmentService.upload(eq(TASK_ID), any(), eq("u1"))).thenThrow(new UnsupportedMediaTypeException(
+        "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF."));
+
+    mvc.perform(multipart(ATTACHMENTS_URL).file(samplePng()).header("Authorization", "Bearer tok"))
+        .andExpect(status().is(415))
+        .andExpect(content().json(
+            "{\"message\":\"File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF.\","
+                + "\"error\":\"Unsupported Media Type\",\"statusCode\":415}",
+            JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("broken multipart body (MultipartException) → 400 naming the expected part")
+  void brokenMultipart() throws Exception {
+    authenticateU1();
+    when(attachmentService.upload(eq(TASK_ID), any(), eq("u1")))
+        .thenThrow(new MultipartException("Failed to parse multipart servlet request"));
+
+    mvc.perform(multipart(ATTACHMENTS_URL).file(samplePng()).header("Authorization", "Bearer tok"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().json(
+            "{\"message\":\"Request must be multipart/form-data with a file part named \\\"file\\\"\","
+                + "\"error\":\"Bad Request\",\"statusCode\":400}",
+            JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("GET /tasks/:taskId/attachments → 200 PaginatedResponse")
+  void listAttachments() throws Exception {
+    authenticateU1();
+    when(attachmentService.list(eq(TASK_ID), any(), eq("u1"))).thenReturn(
+        new PaginatedResponse<>(List.of(sampleAttachment().toJson()), PaginationMeta.of(1, 20, 1)));
+
+    mvc.perform(get(ATTACHMENTS_URL + "?page=1&limit=20").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].file_name").value("login-bug.png"))
+        .andExpect(jsonPath("$.data[0].storage_key").doesNotExist())
+        .andExpect(jsonPath("$.meta.total").value(1))
+        .andExpect(jsonPath("$.meta.totalPages").value(1));
+  }
+
+  @Test
+  @DisplayName("limit over 100 → ValidationPipe 400, service untouched")
+  void listAttachmentsValidation() throws Exception {
+    authenticateU1();
+
+    mvc.perform(get(ATTACHMENTS_URL + "?limit=101").header("Authorization", "Bearer tok"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Bad Request"));
+    verifyNoInteractions(attachmentService);
+  }
+
+  @Test
+  @DisplayName("GET …/download → 200 { url, expires_at }")
+  void downloadAttachment() throws Exception {
+    authenticateU1();
+    when(attachmentService.downloadUrl(TASK_ID, ATTACHMENT_ID, "u1")).thenReturn(
+        new DownloadUrlDto("https://storage.test/k?sig=1", Instant.parse("2026-09-26T10:05:00Z")));
+
+    mvc.perform(get(ATTACHMENT_URL + "/download").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(content().json(
+            "{\"url\":\"https://storage.test/k?sig=1\",\"expires_at\":\"2026-09-26T10:05:00.000Z\"}",
+            JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("DELETE …/attachments/:attachmentId → 204 with no body")
+  void deleteAttachment() throws Exception {
+    authenticateU1();
+
+    mvc.perform(delete(ATTACHMENT_URL).header("Authorization", "Bearer tok"))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+    verify(attachmentService).delete(TASK_ID, ATTACHMENT_ID, "u1");
+  }
+
+  @Test
+  @DisplayName("malformed attachment uuid → pipe 400, service untouched")
+  void attachmentUuidPipe() throws Exception {
+    authenticateU1();
+
+    mvc.perform(get(ATTACHMENTS_URL + "/not-a-uuid/download").header("Authorization", "Bearer tok"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().json(
+            "{\"message\":\"Validation failed (uuid is expected)\",\"error\":\"Bad Request\",\"statusCode\":400}",
+            JsonCompareMode.STRICT));
+    verifyNoInteractions(attachmentService);
   }
 }

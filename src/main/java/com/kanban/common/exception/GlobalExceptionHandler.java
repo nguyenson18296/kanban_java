@@ -5,12 +5,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -26,6 +30,12 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+  private final DataSize maxUploadSize;
+
+  public GlobalExceptionHandler(@Value("${app.attachments.max-size:10MB}") String maxUploadSize) {
+    this.maxUploadSize = DataSize.parse(maxUploadSize);
+  }
 
   @ExceptionHandler(TooManyRequestsException.class)
   public ResponseEntity<Object> handleTooManyRequests(TooManyRequestsException ex) {
@@ -58,6 +68,21 @@ public class GlobalExceptionHandler {
     Throwable cause = ex.getMostSpecificCause();
     return ResponseEntity.status(HttpStatus.BAD_REQUEST)
         .body(new BadRequestException(cause.getMessage()).toBody());
+  }
+
+  /** Spring rejects an over-limit upload while resolving the file argument; same body as the service's check. */
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  public ResponseEntity<Object> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+    PayloadTooLargeException error = PayloadTooLargeException.forFileSize(maxUploadSize);
+    return ResponseEntity.status(error.getStatus()).body(error.toBody());
+  }
+
+  /** Also where server-side parse failures land (missing temp dir, full disk), so always log the cause. */
+  @ExceptionHandler(MultipartException.class)
+  public ResponseEntity<Object> handleMultipart(MultipartException ex) {
+    log.warn("Rejected multipart request", ex);
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new BadRequestException(
+        "Request must be multipart/form-data with a file part named \"file\"").toBody());
   }
 
   @ExceptionHandler(Exception.class)

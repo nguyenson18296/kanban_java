@@ -29,6 +29,7 @@ including its quirks.
 | Board count / ROW_NUMBER queries | query builder | `BoardQueries` (`JpaBoardQueries`) |
 | Task full-text search (Java-only, JAV-34) | — | `TaskSearchQueries` (`JpaTaskSearchQueries`); `TaskSearchSql` shares the predicate with `JpaBoardQueries` |
 | Task dependency graph (Java-only, JSP-33) | — | `DependencyQueries` (`JpaDependencyQueries`) — `WITH RECURSIVE` reachability walk for the cycle check, plus a per-project `pg_advisory_xact_lock` |
+| Task attachment storage (Java-only, JSP-40) | — | `FileStorage` (`S3FileStorage`, AWS SDK v2) against Supabase Storage / MinIO; signed download URLs; `storage_deletions` queue (V6 trigger) drained by `@Scheduled` `StorageDeletionJob` |
 | `EventEmitter2.emit` + `@OnEvent` | `@nestjs/event-emitter` | `EventBus` (`SpringEventBus` → `ApplicationEventPublisher`) + `@Async @EventListener` on typed payloads (`eventExecutor` pool). Fire-and-forget, like Nest |
 | Socket.IO gateway | `@nestjs/platform-socket.io` | netty-socketio (`NettySocketIoServer`) behind `SocketServer`/`SocketClient` adapters; `EventsGateway`, `EventsService`, `WsJwtGuard` ported 1:1 |
 | Migrations (`src/migrations`, never executed — `synchronize` was on) | TypeORM | Flyway `V1__baseline_schema.sql` (schema + stored procedures + trigger). `synchronize` has no equivalent and is intentionally not reproduced |
@@ -52,6 +53,7 @@ guards and response shapes are identical.
 | `label` | `modules.label` | `POST /labels` 201, `GET /labels`, `GET /labels/:id`, `PATCH /labels/:id`, `DELETE /labels/:id` 200 |
 | `task` | `modules.task` | `POST /tasks` 🔒 201, `GET /tasks`, `GET /tasks/by-ticket/:ticketId`, `GET /tasks/:id`, `PATCH /tasks/:id` 🔒, `PATCH /tasks/:id/reorder` 🔒, `PATCH /tasks/:id/move` 🔒, `DELETE /tasks/:id` 200, `POST /tasks/:id/subtasks` 🔒 201, `GET /tasks/:id/subtasks`, `PATCH /tasks/:id/subtasks/:subtaskId/reorder`, `POST/DELETE /tasks/:id/assignees` 🔒 (201/200), `POST/DELETE /tasks/:id/labels` 🔒 (201/200) |
 | — (Java-only, JSP-33) | `modules.dependency` | 🔒 `POST /tasks/:id/dependencies` 201, `DELETE /tasks/:id/dependencies` 204, `GET /tasks/:id/dependencies` — directed blocks/blocked-by edges with server-side cycle prevention (§6.13) |
+| — (Java-only, JSP-40) | `modules.attachment` | 🔒 `POST /tasks/:taskId/attachments` 201 (multipart `file`), `GET /tasks/:taskId/attachments` (`PaginatedResponse`), `GET /tasks/:taskId/attachments/:attachmentId/download` (`{ url, expires_at }`), `DELETE /tasks/:taskId/attachments/:attachmentId` 204 (§6.14) |
 | `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` 🔒 (`search` is full-text since JAV-34 — §6.11) |
 | — (Java-only, JAV-34) | `modules.search` | `GET /search/tasks?q&page&limit` 🔒 — ranked full-text search across the caller's projects, `PaginatedResponse` |
 | `comment` | `modules.comment` | `POST /tasks/:taskId/comments` 🔒 201, `GET /tasks/:taskId/comments`, `PATCH /comments/:id` 🔒, `DELETE /comments/:id` 🔒 204 |
@@ -163,6 +165,9 @@ Against an existing Nest-created database, start once with
 `task_activity_action` enum values. It has no Nest counterpart — the Nest schema has no
 dependency table.
 
+`V6__create_task_attachments.sql` (JSP-40) adds `task_attachments`, the `storage_deletions`
+queue and the `AFTER DELETE` trigger that fills it. No Nest counterpart.
+
 JDBC URL detail: the datasource URL carries `stringtype=unspecified` so that the
 `String`-typed uuid ids and the snake_case enum values (bound through JPA
 `AttributeConverter`s) are inferred by PostgreSQL as `uuid` / the enum types instead
@@ -236,3 +241,11 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
     activity. Dependencies are deliberately absent from the task and board payloads, no
     Socket.IO event is emitted, and a task can still move to `done` with unfinished
     blockers — all tracked separately. Queries: `docs/queries/dependency.md`.
+14. **Task attachments (JSP-40).** A Java-only feature with no Nest counterpart: files
+    (PNG/JPEG/GIF/WebP/PDF, ≤ `ATTACHMENT_MAX_SIZE`, type detected from the bytes; the
+    download name gets the detected type's extension if the sent one does not match) are
+    uploaded through the backend to S3-compatible storage and downloaded from a 5-minute
+    signed URL. Errors use Nest's `PayloadTooLargeException` (413) and
+    `UnsupportedMediaTypeException` (415) shapes. Deleting rows — directly or via task
+    cascades — queues the files through a trigger; a scheduled job removes them. No activity
+    entry or Socket.IO event is emitted. Queries: `docs/queries/attachment.md`.

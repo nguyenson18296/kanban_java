@@ -41,11 +41,22 @@ spring:
     default-property-inclusion: always
     serialization:
       write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      # Parse an upload only when the controller asks for the file -- after JwtAuthInterceptor,
+      # so anonymous requests are rejected unread. Size limits: StorageConfig (ATTACHMENT_MAX_SIZE).
+      resolve-lazily: true
 
 server:
   port: ${PORT:1996}
   forward-headers-strategy: native
   tomcat:
+    # How much of an over-limit upload Tomcat reads and discards so the client still receives
+    # the 413 body instead of a reset connection (default 2MB).
+    max-swallow-size: 50MB
+    # Each multipart part's headers (they carry the raw UTF-8 file name) may be this large; Tomcat's
+    # 512B default turns a ~150-character Vietnamese name into a false "413 File is too large".
+    max-part-header-size: 2KB
     remoteip:
       # Match no proxies by default (including loopback/private networks).
       internal-proxies: '${TRUSTED_PROXY_REGEX:(?!)}'
@@ -69,6 +80,16 @@ app:
   socket-io:
     port: ${SOCKET_IO_PORT:1997}
     enabled: ${SOCKET_IO_ENABLED:true}
+  storage:
+    endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
+    region: ${STORAGE_REGION:us-east-1}
+    bucket: ${STORAGE_BUCKET:task-attachments}
+    access-key-id: ${STORAGE_ACCESS_KEY_ID:}
+    secret-access-key: ${STORAGE_SECRET_ACCESS_KEY:}
+    force-path-style: ${STORAGE_FORCE_PATH_STYLE:true}
+  attachments:
+    max-size: ${ATTACHMENT_MAX_SIZE:10MB}
+    download-url-ttl: ${ATTACHMENT_DOWNLOAD_URL_TTL:5m}
 
 springdoc:
   api-docs:
