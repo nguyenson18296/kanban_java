@@ -1,4 +1,4 @@
-# Local S3-compatible storage for task attachments (JSP-40).
+# Offline alternative to the Cloudflare R2 bucket for task attachments (JSP-40).
 #   docker compose -f compose.storage.yml up -d --wait
 #   docker compose -f compose.storage.yml exec minio mc mb --ignore-existing local/task-attachments
 # Console: http://127.0.0.1:9001 (minioadmin / minioadmin). Buckets are private by default.

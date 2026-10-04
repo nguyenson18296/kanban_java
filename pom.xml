@@ -89,7 +89,7 @@
       <artifactId>jsoup</artifactId>
       <version>${jsoup.version}</version>
     </dependency>
-    <!-- Task attachments (JSP-40): S3 API for Supabase Storage / MinIO. Sync client only,
+    <!-- Task attachments (JSP-40): S3 API for Cloudflare R2 (MinIO offline). Sync client only,
          over the JDK's HttpURLConnection; the Netty- and Apache-based clients are excluded
          so the SDK brings no second Netty next to netty-socketio's. -->
     <dependency>

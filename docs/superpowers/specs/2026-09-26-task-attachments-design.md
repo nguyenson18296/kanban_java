@@ -21,7 +21,7 @@ attachment exists.
 | Allowed types | **PNG, JPEG, GIF, WebP, PDF** — checked from the file's bytes, not its name |
 | Who can delete | **The uploader (while still a member) or a project admin/owner** |
 | Per-project quota | **Not now.** `size_bytes` is stored, so a `SUM` check is a small follow-up |
-| Storage | **S3 API** — Supabase Storage in real environments, MinIO locally and in tests |
+| Storage | **S3 API on Cloudflare R2** — one private bucket, `task-attachments`, shared by dev and production because this is a learning project (changed 2026-10-04 from "Supabase Storage in production, MinIO locally": no Docker on the dev machine, no egress fees, and dev then tests the same provider production runs); MinIO kept as the offline alternative |
 | Orphaned files | **A database deletion queue** drained by a scheduled job (§5) |
 
 ### Out of scope (separate tickets)
@@ -76,7 +76,7 @@ before the attachment is looked up (CLAUDE.md "gate before lookup").
 ### Download JSON (`DownloadUrlDto`)
 
 ```json
-{ "url": "https://<ref>.storage.supabase.co/storage/v1/s3/task-attachments/tasks/…?X-Amz-…", "expires_at": "2026-09-26T10:05:00.000Z" }
+{ "url": "https://<account-id>.r2.cloudflarestorage.com/task-attachments/tasks/…?X-Amz-…", "expires_at": "2026-09-26T10:05:00.000Z" }
 ```
 
 ### Delete rule, precisely
@@ -197,8 +197,9 @@ CREATE TRIGGER trg_task_attachments_queue_file_deletion
 
 ## 5. Storage and file lifecycle
 
-**Bucket:** one private bucket, `task-attachments`. The app never creates it (compose does
-locally; a person does in Supabase, §8).
+**Bucket:** one private R2 bucket, `task-attachments`, shared by dev and production. The app
+never creates it (a person does, §8). A real product would give each environment its own bucket
+and token, so dev uploads and the cleanup job never touch production files.
 
 **Key:** `tasks/{taskId}/{random UUID}`. No filename (odd characters can't break paths) and
 no project id (a task can move between projects via `PATCH /tasks/{id}/move`; its files
@@ -208,7 +209,7 @@ follow it).
 - `Content-Type` = the detected type from §3, not the client's claim.
 - `Content-Disposition` = `attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>`,
   so browsers save the file under its original name instead of rendering it. Set at upload
-  time (Supabase supports it on `PutObject`) rather than as a presign override.
+  time (R2 supports it on `PutObject`) rather than as a presign override.
 
 **Upload flow** (`AttachmentService.upload`, not one big transaction):
 1. Checks from §3.
@@ -313,19 +314,19 @@ app:
 - **S3 client settings:** `endpointOverride`, `forcePathStyle(true)`, and
   `requestChecksumCalculation(WHEN_REQUIRED)` / `responseChecksumValidation(WHEN_REQUIRED)` —
   AWS SDK v2 ≥ 2.30 adds default checksums that some S3-compatible stores reject. Confirm
-  against MinIO (IT) and Supabase (manual smoke test).
+  against R2 (storage IT and the smoke test).
 
 ## 8. Environments
 
-- **Local:** `compose.storage.yml` — MinIO on `127.0.0.1:9000` (console `:9001`); create the
-  private `task-attachments` bucket once with
+- **Cloudflare R2 (dev and production):** R2 → create the **private** bucket `task-attachments` →
+  Manage R2 API Tokens → a token with "Object Read & Write" scoped to that bucket. Endpoint
+  `https://<account-id>.r2.cloudflarestorage.com`, region `auto`. The keys stay in `.env` /
+  server environment variables — never in the frontend, never in git.
+- **Offline alternative:** `compose.storage.yml` — MinIO on `127.0.0.1:9000` (console `:9001`);
+  create the bucket once with
   `docker compose -f compose.storage.yml exec minio mc mb --ignore-existing local/task-attachments`
-  (no one-shot container: `up --wait` fails on containers that exit). Mirrors
-  `compose.redis.yml`. `.env.example` gets the §7 variables with MinIO defaults.
-- **Supabase:** Storage → create a **private** bucket `task-attachments` → Storage settings →
-  enable the S3 connection → generate S3 access keys. Endpoint
-  `https://<project-ref>.storage.supabase.co/storage/v1/s3`, region from the same page. These
-  keys bypass RLS — backend only, never in the frontend.
+  (no one-shot container: `up --wait` fails on containers that exit). `.env.example` shows the
+  R2 settings, with MinIO as a comment.
 
 ## 9. Testing
 
@@ -354,7 +355,7 @@ app:
   (proves `resolve-lazily`). MockMvc cannot test either — it does no real multipart parsing
   and enforces no size limits.
 
-**Integration (opt-in, new `-Pstorage-it` profile, MinIO via `compose.storage.yml`):**
+**Integration (opt-in, new `-Pstorage-it` profile, against the R2 bucket via `-Dstorage.it.*` (unique `it/<uuid>/` prefix, so safe on the shared bucket), or MinIO via `compose.storage.yml`):**
 - `S3FileStorageIT` — built through the real `StorageConfig` bean methods: put → signed URL →
   HTTP GET returns the same bytes and the `Content-Disposition` filename; `delete` of existing
   and missing keys.
@@ -365,8 +366,9 @@ app:
 and an attachment on each; delete the parent; expect both keys in `storage_deletions`. The
 script goes in `docs/queries/attachment.md` (the repo has no PostgreSQL integration tests).
 
-**Manual smoke against Supabase** before merging: upload, download via the signed URL, delete,
-wait one job cycle, confirm the object is gone.
+**Manual smoke against the R2 bucket** before merging: upload, download via the
+signed URL (original name kept, including a long non-ASCII one), delete, wait one job cycle,
+confirm the object is gone.
 
 ## 10. Docs updated in the same change
 
@@ -382,11 +384,11 @@ wait one job cycle, confirm the object is gone.
 
 ## 11. Risks to verify early
 
-1. **Supabase + AWS SDK v2 checksums** (§7) — the first thing the Supabase smoke test checks.
+1. **R2 + AWS SDK v2 checksums** (§7) — the first thing the R2 smoke test checks.
 2. **Oversized upload returns a readable 413** under real Tomcat (§3) — `AttachmentUploadHttpTest`.
 3. **`resolve-lazily` really defers parsing past `JwtAuthInterceptor`** —
    `AttachmentUploadHttpTest`: an anonymous oversized upload gets 401, not 413.
 4. **Netty version clash** — `mvn dependency:tree` shows no `software.amazon.awssdk:netty-nio-client`.
 5. **No container runtime on the dev machine** (checked 2026-09-26: no `docker`). `storage-it`
-   needs MinIO: install Docker Desktop / OrbStack, or run MinIO from Homebrew. MinIO's
-   community Docker images stopped receiving updates in late 2025, so pin an existing tag.
+   now runs against the R2 bucket instead (2026-10-04); MinIO stays available for anyone with
+   Docker. MinIO's community images stopped receiving updates in late 2025, so its tag is pinned.

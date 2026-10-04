@@ -29,7 +29,7 @@ including its quirks.
 | Board count / ROW_NUMBER queries | query builder | `BoardQueries` (`JpaBoardQueries`) |
 | Task full-text search (Java-only, JAV-34) | — | `TaskSearchQueries` (`JpaTaskSearchQueries`); `TaskSearchSql` shares the predicate with `JpaBoardQueries` |
 | Task dependency graph (Java-only, JSP-33) | — | `DependencyQueries` (`JpaDependencyQueries`) — `WITH RECURSIVE` reachability walk for the cycle check, plus a per-project `pg_advisory_xact_lock` |
-| Task attachment storage (Java-only, JSP-40) | — | `FileStorage` (`S3FileStorage`, AWS SDK v2) against Supabase Storage / MinIO; signed download URLs; `storage_deletions` queue (V6 trigger) drained by `@Scheduled` `StorageDeletionJob` |
+| Task attachment storage (Java-only, JSP-40) | — | `FileStorage` (`S3FileStorage`, AWS SDK v2) against Cloudflare R2 (one private bucket); signed download URLs; `storage_deletions` queue (V6 trigger) drained by `@Scheduled` `StorageDeletionJob` |
 | `EventEmitter2.emit` + `@OnEvent` | `@nestjs/event-emitter` | `EventBus` (`SpringEventBus` → `ApplicationEventPublisher`) + `@Async @EventListener` on typed payloads (`eventExecutor` pool). Fire-and-forget, like Nest |
 | Socket.IO gateway | `@nestjs/platform-socket.io` | netty-socketio (`NettySocketIoServer`) behind `SocketServer`/`SocketClient` adapters; `EventsGateway`, `EventsService`, `WsJwtGuard` ported 1:1 |
 | Migrations (`src/migrations`, never executed — `synchronize` was on) | TypeORM | Flyway `V1__baseline_schema.sql` (schema + stored procedures + trigger). `synchronize` has no equivalent and is intentionally not reproduced |

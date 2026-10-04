@@ -18,18 +18,19 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ByteArrayResource;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
-import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /**
- * Opt-in: docker compose -f compose.storage.yml up -d --wait && mvn -Pstorage-it verify.
- * Built through the real StorageConfig beans (checksum settings included). Uses its own bucket
- * and a unique key prefix; deletes everything it creates.
+ * Opt-in: mvn -Pstorage-it verify against the Cloudflare R2 bucket (the app's storage)
+ * or a local MinIO (the defaults below). Point it at R2 with -Dstorage.it.endpoint=…,
+ * -Dstorage.it.region=auto, -Dstorage.it.bucket=…, -Dstorage.it.access-key=…, -Dstorage.it.secret-key=….
+ * Built through the real StorageConfig beans (checksum settings included). Uses a unique key
+ * prefix and deletes everything it creates.
  */
 class S3FileStorageIT {
-  private static final String BUCKET = "kanban-it";
+  private static final String BUCKET = System.getProperty("storage.it.bucket", "kanban-it");
 
   private final String prefix = "it/" + UUID.randomUUID() + "/";
   private final HttpClient http = HttpClient.newHttpClient();
@@ -39,7 +40,7 @@ class S3FileStorageIT {
 
   private static StorageProperties properties(String secret) {
     return new StorageProperties(URI.create(System.getProperty("storage.it.endpoint", "http://127.0.0.1:9000")),
-        "us-east-1", BUCKET, System.getProperty("storage.it.access-key", "minioadmin"), secret, true);
+        System.getProperty("storage.it.region", "us-east-1"), BUCKET, System.getProperty("storage.it.access-key", "minioadmin"), secret, true);
   }
 
   @BeforeEach
@@ -49,10 +50,11 @@ class S3FileStorageIT {
     s3 = config.s3Client(p);
     presigner = config.s3Presigner(p);
     storage = new S3FileStorage(s3, presigner, BUCKET);
+    // Create only when missing: a bucket-scoped R2 token may use the bucket but not create one.
     try {
+      s3.headBucket(b -> b.bucket(BUCKET));
+    } catch (NoSuchBucketException missing) {
       s3.createBucket(b -> b.bucket(BUCKET));
-    } catch (BucketAlreadyOwnedByYouException | BucketAlreadyExistsException ignored) {
-      // created by an earlier run
     }
   }
 

@@ -133,7 +133,7 @@ attachments, and its subtasks' attachments.
 
 ```json
 {
-  "url": "https://<project-ref>.storage.supabase.co/storage/v1/s3/task-attachments/tasks/9c2d7f3e-1b2a-4c5d-8e9f-0a1b2c3d4e5f/0b6f2c1e-…?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300&X-Amz-Signature=…",
+  "url": "https://<account-id>.r2.cloudflarestorage.com/task-attachments/tasks/9c2d7f3e-1b2a-4c5d-8e9f-0a1b2c3d4e5f/0b6f2c1e-…?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300&X-Amz-Signature=…",
   "expires_at": "2026-09-26T10:05:00.000Z"
 }
 ```

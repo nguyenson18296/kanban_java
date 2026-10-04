@@ -4,7 +4,7 @@ import java.net.URI;
 import java.time.Duration;
 import org.springframework.core.io.InputStreamSource;
 
-/** Object storage behind the S3 API (Supabase Storage in real environments, MinIO locally). */
+/** Object storage behind the S3 API (Cloudflare R2; MinIO as the offline alternative). */
 public interface FileStorage {
   /**
    * Stores {@code size} bytes from {@code data}; browsers save the object as {@code downloadName}.

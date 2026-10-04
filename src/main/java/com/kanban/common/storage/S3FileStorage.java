@@ -32,7 +32,7 @@ public class S3FileStorage implements FileStorage {
 
   @Override
   public void put(String key, InputStreamSource data, long size, String contentType, String downloadName) {
-    // Content-Disposition is stored with the object (Supabase supports it on PutObject), so a
+    // Content-Disposition is stored with the object (R2 supports it on PutObject), so a
     // signed GET needs no response-header override.
     PutObjectRequest request = PutObjectRequest.builder()
         .bucket(bucket)
