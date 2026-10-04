@@ -10,12 +10,13 @@ implementation. Use this alongside Swagger (`/api/docs`); database queries are d
 | Base URL | Default `http://localhost:1996/api` |
 | Auth | `Authorization: Bearer <access_token>` on all four |
 | Scope | The task's project: viewers list and download, members upload, uploader or admin/owner deletes |
-| Files | PNG, JPEG, GIF, WebP, PDF — at most **10 MB** (server setting `ATTACHMENT_MAX_SIZE`), one file per request |
+| Files | PNG, JPEG, GIF, WebP, PDF, Markdown (`.md`) — at most **10 MB** (server setting `ATTACHMENT_MAX_SIZE`), one file per request |
 | Responses | Attachment object; list `{ data, meta: { page, limit, total, totalPages } }`; download `{ url, expires_at }` |
 | Casing | Fields are **snake_case**; pagination uses **`totalPages`** |
 
 **Changelog**
 
+- 2026-10-04 (JSP-40): Markdown (`.md`/`.markdown`, UTF-8 text) is accepted as `text/markdown; charset=utf-8`.
 - 2026-09-26 (JSP-40): download names get the detected type's extension when the sent one
   does not match; long non-ASCII names no longer hit a false `413`; corrected the error-check order.
 - 2026-09-26 (JSP-40): documented the four attachment endpoints, file rules, download flow,
@@ -64,7 +65,7 @@ Content-Type: image/png
 
 | Rule | What the server does |
 |---|---|
-| Type | Read from the file's first bytes. The browser's `Content-Type` and the extension are **ignored**: a PNG named `report.pdf` is stored as `image/png`; an `.exe` renamed `.png` is refused (`415`). SVG is not allowed. |
+| Type | Read from the file's first bytes; the browser's `Content-Type` is **ignored**: a PNG named `report.pdf` is stored as `image/png`; an `.exe` renamed `.png` is refused (`415`). **Markdown** has no signature, so a `.md`/`.markdown` file is accepted only if its whole content is UTF-8 text (a ZIP renamed `.md` gets `415`). SVG is not allowed. |
 | Size | Over the limit → `413`. The limit is a server setting (10 MB today); the message names it. |
 | Empty | A 0-byte file → `400 File is empty`. |
 | Name | Kept for display and download, cleaned first: folder parts dropped (`C:\fakepath\shot.png` → `shot.png`), control/invisible characters removed, cut to 255 characters keeping the extension. Nothing left → `attachment`. Non-ASCII names (e.g. Vietnamese) are kept. If the extension does not match the detected type, the type's extension is appended: `report.pdf` holding a PNG → `report.pdf.png`, `report.bat` holding a PDF → `report.bat.pdf`. Use the returned `file_name`, not the name you sent. |
@@ -148,7 +149,8 @@ export type UserRole =
   | 'qa' | 'devops' | 'designer' | 'product_manager' | 'tech_lead';
 
 export type AttachmentContentType =
-  | 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'application/pdf';
+  | 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'application/pdf'
+  | 'text/markdown; charset=utf-8';
 
 export interface AttachmentUploader {
   id: string;
@@ -233,7 +235,7 @@ Upload errors, in the order the server checks them: `401`; then, while the body 
 ```
 
 ```json
-{ "message": "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF.", "error": "Unsupported Media Type", "statusCode": 415 }
+{ "message": "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF, Markdown.", "error": "Unsupported Media Type", "statusCode": 415 }
 ```
 
 ```json
@@ -298,6 +300,8 @@ Unexpected failure:
 - **Hide upload** for viewers.
 - **Cache keys:** `['task-attachments', taskId, page, limit]`. Invalidate the task's attachment
   queries after an upload or delete; after deleting the last item on a page, go back one page.
+- Markdown files download like any other attachment. If you ever preview one inline, render it
+  with HTML sanitized — the server accepts any UTF-8 text in a `.md` file.
 - Display `size_bytes` in human units (KB/MB) and `content_type` as the icon hint (image vs PDF).
 
 ## 7. Backend references

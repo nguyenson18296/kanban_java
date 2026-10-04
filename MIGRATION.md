@@ -242,7 +242,8 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
     Socket.IO event is emitted, and a task can still move to `done` with unfinished
     blockers — all tracked separately. Queries: `docs/queries/dependency.md`.
 14. **Task attachments (JSP-40).** A Java-only feature with no Nest counterpart: files
-    (PNG/JPEG/GIF/WebP/PDF, ≤ `ATTACHMENT_MAX_SIZE`, type detected from the bytes; the
+    (PNG/JPEG/GIF/WebP/PDF detected from the bytes, Markdown from a `.md` name plus a UTF-8 text
+    check, ≤ `ATTACHMENT_MAX_SIZE`; the
     download name gets the detected type's extension if the sent one does not match) are
     uploaded through the backend to S3-compatible storage and downloaded from a 5-minute
     signed URL. Errors use Nest's `PayloadTooLargeException` (413) and

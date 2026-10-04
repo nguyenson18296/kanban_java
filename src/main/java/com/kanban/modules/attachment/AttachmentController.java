@@ -42,7 +42,7 @@ public class AttachmentController {
   @ResponseStatus(HttpStatus.CREATED)
   @JwtAuth
   @SecurityRequirement(name = "bearer")
-  @Operation(summary = "Attach one file (PNG, JPEG, GIF, WebP or PDF) to a task")
+  @Operation(summary = "Attach one file (PNG, JPEG, GIF, WebP, PDF or Markdown) to a task")
   @Parameter(name = "taskId", description = "Task UUID")
   @ApiResponse(responseCode = "201", description = "Attachment created")
   @ApiResponse(responseCode = "400", description = "No file part, or an empty file")

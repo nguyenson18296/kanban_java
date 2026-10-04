@@ -58,7 +58,7 @@ class AttachmentServiceTest {
   private static final String OTHER = "22222222-2222-4222-8222-222222222222";
   private static final byte[] PNG = bytes(0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 'I', 'H', 'D', 'R');
   private static final byte[] EXE = bytes('M', 'Z', 0x90, 0, 3, 0, 0, 0, 4, 0, 0, 0);
-  private static final String NOT_ALLOWED = "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF.";
+  private static final String NOT_ALLOWED = "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF, Markdown.";
 
   private AttachmentRepository repository;
   private ProjectAccessService access;
@@ -202,6 +202,26 @@ class AttachmentServiceTest {
       TaskAttachment result = service.upload(TASK, file("report.pdf", "application/pdf", PNG), USER);
       assertThat(result.getContentType()).isEqualTo("image/png");
       assertThat(result.getFileName()).isEqualTo("report.pdf.png");
+    }
+
+    @Test
+    @DisplayName("a UTF-8 .md file is stored as text/markdown under its own name")
+    void markdownUpload() {
+      byte[] md = "# Lỗi đăng nhập\n\n1. Mở trang\n".getBytes(StandardCharsets.UTF_8);
+
+      TaskAttachment result = service.upload(TASK, file("ghi-chu.md", "application/octet-stream", md), USER);
+
+      assertThat(result.getContentType()).isEqualTo("text/markdown; charset=utf-8");
+      assertThat(result.getFileName()).isEqualTo("ghi-chu.md");
+      assertThat(storage.files.values().iterator().next().bytes()).isEqualTo(md);
+    }
+
+    @Test
+    @DisplayName("a ZIP renamed to .md → 415, nothing stored")
+    void binaryNamedMarkdown() {
+      assertBody(() -> service.upload(TASK, file("notes.md", "text/markdown", bytes('P', 'K', 3, 4, 20, 0, 0, 0, 8, 0, 0, 0)), USER),
+          415, NOT_ALLOWED, "Unsupported Media Type");
+      assertThat(storage.files).isEmpty();
     }
 
     @Test

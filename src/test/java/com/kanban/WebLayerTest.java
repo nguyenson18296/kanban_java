@@ -660,12 +660,12 @@ class WebLayerTest {
   void uploadTypeNotAllowed() throws Exception {
     authenticateU1();
     when(attachmentService.upload(eq(TASK_ID), any(), eq("u1"))).thenThrow(new UnsupportedMediaTypeException(
-        "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF."));
+        "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF, Markdown."));
 
     mvc.perform(multipart(ATTACHMENTS_URL).file(samplePng()).header("Authorization", "Bearer tok"))
         .andExpect(status().is(415))
         .andExpect(content().json(
-            "{\"message\":\"File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF.\","
+            "{\"message\":\"File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF, Markdown.\","
                 + "\"error\":\"Unsupported Media Type\",\"statusCode\":415}",
             JsonCompareMode.STRICT));
   }

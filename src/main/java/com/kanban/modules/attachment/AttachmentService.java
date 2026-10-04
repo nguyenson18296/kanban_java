@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,9 +68,12 @@ public class AttachmentService {
     if (file.getSize() > properties.maxSize().toBytes()) {
       throw PayloadTooLargeException.forFileSize(properties.maxSize());
     }
-    AllowedFileType type = AllowedFileType.detect(readHeader(file)).orElseThrow(() ->
-        new UnsupportedMediaTypeException("File type is not allowed. Allowed types: " + AllowedFileType.labels() + "."));
-    String fileName = FileNameSanitizer.withExtensionOf(FileNameSanitizer.sanitize(file.getOriginalFilename()), type);
+    String sanitized = FileNameSanitizer.sanitize(file.getOriginalFilename());
+    AllowedFileType type = AllowedFileType.detect(readHeader(file))
+        .or(() -> detectMarkdown(sanitized, file))
+        .orElseThrow(() ->
+            new UnsupportedMediaTypeException("File type is not allowed. Allowed types: " + AllowedFileType.labels() + "."));
+    String fileName = FileNameSanitizer.withExtensionOf(sanitized, type);
     // The UUID pipe accepts any casing; keep keys canonical like the ids Postgres returns.
     String key = "tasks/" + taskId.toLowerCase(Locale.ROOT) + "/" + UUID.randomUUID();
 
@@ -150,6 +154,16 @@ public class AttachmentService {
       return in.readNBytes(AllowedFileType.HEADER_LENGTH);
     } catch (IOException e) {
       log.error("Failed to read uploaded file header", e);
+      throw new InternalServerErrorException("Failed to read the uploaded file");
+    }
+  }
+
+  /** Reads the whole upload again (from its temp file, streamed) to confirm it is UTF-8 text. */
+  private static Optional<AllowedFileType> detectMarkdown(String fileName, MultipartFile file) {
+    try (InputStream in = file.getInputStream()) {
+      return AllowedFileType.detectMarkdown(fileName, in);
+    } catch (IOException e) {
+      log.error("Failed to read uploaded file", e);
       throw new InternalServerErrorException("Failed to read the uploaded file");
     }
   }

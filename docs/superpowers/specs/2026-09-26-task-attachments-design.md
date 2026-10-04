@@ -18,7 +18,7 @@ attachment exists.
 | Question | Decision |
 |---|---|
 | Max file size | **10 MB** (config value `ATTACHMENT_MAX_SIZE`) |
-| Allowed types | **PNG, JPEG, GIF, WebP, PDF** — checked from the file's bytes, not its name |
+| Allowed types | **PNG, JPEG, GIF, WebP, PDF** — checked from the file's bytes, not its name; **Markdown** (added 2026-10-04) — `.md`/`.markdown` name + UTF-8 text content, since it has no signature |
 | Who can delete | **The uploader (while still a member) or a project admin/owner** |
 | Per-project quota | **Not now.** `size_bytes` is stored, so a `SUM` check is a small follow-up |
 | Storage | **S3 API on Cloudflare R2** — one private bucket, `task-attachments`, shared by dev and production because this is a learning project (changed 2026-10-04 from "Supabase Storage in production, MinIO locally": no Docker on the dev machine, no egress fees, and dev then tests the same provider production runs); MinIO kept as the offline alternative |
@@ -110,10 +110,13 @@ before the attachment is looked up (CLAUDE.md "gate before lookup").
    | GIF | `GIF87a` / `GIF89a` | `image/gif` |
    | WebP | `RIFF` + 4 bytes + `WEBP` | `image/webp` |
    | PDF | `%PDF-` | `application/pdf` |
+   | Markdown | none — name ends `.md`/`.markdown` (any case) **and** the whole file is UTF-8 text with no control characters except tab/CR/LF (BOM allowed) | `text/markdown; charset=utf-8` |
 
-   No match → 415 `"File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF."`
-   The browser's claimed `Content-Type` and the file extension are ignored. SVG is
-   deliberately excluded (it can carry scripts).
+   No match → 415 `"File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF, Markdown."`
+   The browser's claimed `Content-Type` is ignored; the extension counts only for Markdown, and
+   only together with the content check (a renamed binary fails it). Markdown downloads as an
+   attachment like everything else, so embedded HTML never runs; a future inline preview must
+   sanitize it. SVG is deliberately excluded (it can carry scripts).
 6. **File name** (`FileNameSanitizer`) — keep only the part after the last `/` or `\`
    (strips `C:\fakepath\` and `../`), remove control characters, trim, cap at 255 characters
    while keeping the extension; blank → `attachment`. Then `withExtensionOf`: if the extension
@@ -129,7 +132,7 @@ named after their NestJS equivalents:
 
 ```json
 { "message": "File is too large. The maximum size is 10 MB.", "error": "Payload Too Large", "statusCode": 413 }
-{ "message": "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF.", "error": "Unsupported Media Type", "statusCode": 415 }
+{ "message": "File type is not allowed. Allowed types: PNG, JPEG, GIF, WebP, PDF, Markdown.", "error": "Unsupported Media Type", "statusCode": 415 }
 ```
 
 | Situation | Response |

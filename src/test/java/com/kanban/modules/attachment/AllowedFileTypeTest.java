@@ -2,7 +2,10 @@ package com.kanban.modules.attachment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -61,6 +64,34 @@ class AllowedFileTypeTest {
   @Test
   @DisplayName("labels() is the list the 415 message names")
   void labels() {
-    assertThat(AllowedFileType.labels()).isEqualTo("PNG, JPEG, GIF, WebP, PDF");
+    assertThat(AllowedFileType.labels()).isEqualTo("PNG, JPEG, GIF, WebP, PDF, Markdown");
+  }
+
+  private static Optional<AllowedFileType> markdown(String name, byte[] content) throws IOException {
+    return AllowedFileType.detectMarkdown(name, new ByteArrayInputStream(content));
+  }
+
+  private static byte[] utf8(String s) {
+    return s.getBytes(StandardCharsets.UTF_8);
+  }
+
+  @Test
+  @DisplayName("Markdown has no signature: a .md/.markdown name with UTF-8 text content is accepted")
+  void acceptsMarkdownText() throws IOException {
+    assertThat(markdown("notes.md", utf8("# Bug\n\n- step 1\r\n\tindented"))).contains(AllowedFileType.MARKDOWN);
+    assertThat(markdown("NOTES.MD", utf8("# Title"))).contains(AllowedFileType.MARKDOWN);
+    assertThat(markdown("readme.markdown", utf8("text"))).contains(AllowedFileType.MARKDOWN);
+    assertThat(markdown("ghi-chu.md", utf8("\uFEFF# Lỗi đăng nhập — ảnh chụp màn hình"))).contains(AllowedFileType.MARKDOWN);
+    assertThat(AllowedFileType.MARKDOWN.mimeType()).isEqualTo("text/markdown; charset=utf-8");
+  }
+
+  @Test
+  @DisplayName("not Markdown: another extension, binary bytes, broken UTF-8, control characters")
+  void rejectsNonMarkdown() throws IOException {
+    assertThat(markdown("notes.txt", utf8("# plain text"))).isEmpty();
+    assertThat(markdown("notes", utf8("# no extension"))).isEmpty();
+    assertThat(markdown("archive.md", bytes('P', 'K', 3, 4, 20, 0, 0, 0, 8, 0))).isEmpty();
+    assertThat(markdown("broken.md", bytes('o', 'k', 0xC3, 0x28))).isEmpty();
+    assertThat(markdown("bell.md", utf8("text\u0007"))).isEmpty();
   }
 }
