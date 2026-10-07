@@ -30,6 +30,7 @@ including its quirks.
 | Task full-text search (Java-only, JAV-34) | — | `TaskSearchQueries` (`JpaTaskSearchQueries`); `TaskSearchSql` shares the predicate with `JpaBoardQueries` |
 | Task dependency graph (Java-only, JSP-33) | — | `DependencyQueries` (`JpaDependencyQueries`) — `WITH RECURSIVE` reachability walk for the cycle check, plus a per-project `pg_advisory_xact_lock` |
 | Task attachment storage (Java-only, JSP-40) | — | `FileStorage` (`S3FileStorage`, AWS SDK v2) against Cloudflare R2 (one private bucket); signed download URLs; `storage_deletions` queue (V6 trigger) drained by `@Scheduled` `StorageDeletionJob` |
+| Project dashboard statistics (Java-only, JSP-44; cache opt-in) | — | `DashboardQueries` (`JpaDashboardQueries`, one CTE statement) + `DashboardCache` (Redis cache-aside: `SET … PX` TTL, `DEL` after task/column writes, fail-open) |
 | `EventEmitter2.emit` + `@OnEvent` | `@nestjs/event-emitter` | `EventBus` (`SpringEventBus` → `ApplicationEventPublisher`) + `@Async @EventListener` on typed payloads (`eventExecutor` pool). Fire-and-forget, like Nest |
 | Socket.IO gateway | `@nestjs/platform-socket.io` | netty-socketio (`NettySocketIoServer`) behind `SocketServer`/`SocketClient` adapters; `EventsGateway`, `EventsService`, `WsJwtGuard` ported 1:1 |
 | Migrations (`src/migrations`, never executed — `synchronize` was on) | TypeORM | Flyway `V1__baseline_schema.sql` (schema + stored procedures + trigger). `synchronize` has no equivalent and is intentionally not reproduced |
@@ -56,6 +57,7 @@ guards and response shapes are identical.
 | — (Java-only, JSP-40) | `modules.attachment` | 🔒 `POST /tasks/:taskId/attachments` 201 (multipart `file`), `GET /tasks/:taskId/attachments` (`PaginatedResponse`), `GET /tasks/:taskId/attachments/:attachmentId/download` (`{ url, expires_at }`), `DELETE /tasks/:taskId/attachments/:attachmentId` 204 (§6.14) |
 | `board` | `modules.board` | `GET /board/:projectId?tasksPerColumn&assigneeId&priority&labelId&search` 🔒 (`search` is full-text since JAV-34 — §6.11) |
 | — (Java-only, JAV-34) | `modules.search` | `GET /search/tasks?q&page&limit` 🔒 — ranked full-text search across the caller's projects, `PaginatedResponse` |
+| — (Java-only, JSP-44) | `modules.dashboard` | `GET /projects/:projectId/dashboard` 🔒 (any member) — task statistics of one project, raw object (§6.15) |
 | `comment` | `modules.comment` | `POST /tasks/:taskId/comments` 🔒 201, `GET /tasks/:taskId/comments`, `PATCH /comments/:id` 🔒, `DELETE /comments/:id` 🔒 204 |
 | `notification` (+ listener) | `modules.notification` | 🔒 `GET /notifications`, `GET /notifications/unread-count`, `PATCH /notifications/read`, `PATCH /notifications/read-all`, `DELETE /notifications/:id` 204 |
 | `activity` (+ listener) | `modules.activity` | `GET /tasks/:taskId/activities` 🔒 |
@@ -129,6 +131,7 @@ DTOs use, with the **same messages and ordering**:
 | — (new) | `ClassValidatorTest`, `UtilsTest` | validation-message parity, durations, dates, sanitizer, email |
 | — (new, JAV-34) | `SearchServiceTest`, `BoardServiceTest` | membership scoping, blank query, ranked order, snippet escaping, pagination; board blank-search handling |
 | — (new, JSP-33) | `DependencyServiceTest` | transitive + direct cycles, self-reference, all-or-nothing rejection, advisory-lock ordering, masked 404 targets, viewer 403, activity diffing; `WebLayerTest` adds the three routes' status codes and validation bodies |
+| — (new, JSP-44) | `DashboardServiceTest`, `DashboardCacheTest` | zero-filled statuses, sums, assignee order, cache hit/miss/skip, keys and TTL, unreadable entries, swallowed Redis failures, after-commit eviction; `TaskServiceTest`/`KanbanColumnServiceTest` pin every eviction site; `WebLayerTest` adds 200/401/masked 404 |
 
 Mocks follow the specs one-to-one: TypeORM repository mocks → Mockito mocks of the
 Spring Data repositories; `EventEmitter2` mock → `RecordingEventBus`
@@ -143,8 +146,17 @@ for quota responses, disabled mode, IP normalization and counting before validat
 `RedisRateLimiterIT` and `LoginRateLimitHttpIT` cover real Redis concurrency/expiry,
 two HTTP instances/restart, proxy trust, Redis timeouts and disabled login.
 
+JSP-44 adds the first PostgreSQL integration tests, in the opt-in `dashboard-it` profile:
+`DashboardQueriesIT` (the counting rules and the overdue boundary), `DashboardCacheIT` (the
+fill/evict race stays bounded by the TTL; reads never extend it) and `DashboardHttpIT` (whole app
+over HTTP: gate before cache, hits, TTL expiry, eviction, uncommitted data, corrupt entries, Redis
+outage). They boot the full application against the dedicated `compose.postgres.yml` database
+(loopback, `*_it` name enforced) and run from `target/` so the developer's `.env` never loads.
+
 Run: `mvn test` (no external services required). Redis integration tests are opt-in:
-`mvn -Predis-it verify` against a running local Redis; no PostgreSQL required.
+`mvn -Predis-it verify` against a running local Redis; no PostgreSQL required. Dashboard
+integration tests: start `compose.redis.yml` and `compose.postgres.yml`, then
+`mvn -Pdashboard-it verify`.
 
 ## 5. Database
 
@@ -250,3 +262,12 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
     `UnsupportedMediaTypeException` (415) shapes. Deleting rows — directly or via task
     cascades — queues the files through a trigger; a scheduled job removes them. No activity
     entry or Socket.IO event is emitted. Queries: `docs/queries/attachment.md`.
+15. **Project dashboard (JSP-44).** A Java-only read endpoint with no Nest counterpart:
+    `GET /projects/:projectId/dashboard` counts every task and subtask in the project's
+    non-archived columns (total, overdue, per status, per assignee, unassigned) in one SQL
+    statement. With `DASHBOARD_CACHE_ENABLED=true` the result is cached in Redis for
+    `DASHBOARD_CACHE_TTL` (default 60s); membership is still checked on every request, task and
+    column writes evict the affected projects, and any Redis failure falls back to PostgreSQL.
+    Writes made by the Nest app on the shared database do not evict — those numbers refresh
+    when the TTL expires. Contract: `docs/api-contracts/project-dashboard.md`; queries and cache:
+    `docs/queries/dashboard.md`.

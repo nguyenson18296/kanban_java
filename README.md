@@ -56,6 +56,7 @@ mvn -DskipTests package && java -jar target/kanban-backend-1.0.0.jar
 - API: `http://localhost:1996/api` (`GET /api` → `Hello World!`)
 - Swagger UI: `http://localhost:1996/api/docs` (OpenAPI JSON at `/api/docs-json`) — hidden when `NODE_ENV=production`
 - Task search: `GET /api/search/tasks` — request/response contract and frontend integration: [`docs/api-contracts/task-search.md`](docs/api-contracts/task-search.md)
+- Project dashboard: `GET /api/projects/{projectId}/dashboard` — contract: [`docs/api-contracts/project-dashboard.md`](docs/api-contracts/project-dashboard.md)
 - Socket.IO: `http://localhost:1997` (clients: `io('http://localhost:1997', { auth: { token } })`) — full message contract for frontend integration: [`docs/api-contracts/socket-events.md`](docs/api-contracts/socket-events.md)
 
 ## Redis login rate limiting (JAV-37)
@@ -79,13 +80,33 @@ trusted only from an explicitly configured `TRUSTED_PROXY_REGEX` (default: none)
 The [learning guide and HTTP contract](docs/api-contracts/login-rate-limit.md)
 cover counters, TTL, atomic Lua, curl examples, proxy setup and the two-backend experiment.
 
+## Project dashboard cache (JSP-44)
+
+Also optional and off by default; independent of rate limiting, on the same `REDIS_*` connection:
+
+```bash
+docker compose -f compose.redis.yml up -d --wait
+DASHBOARD_CACHE_ENABLED=true mvn spring-boot:run
+```
+
+`GET /api/projects/{projectId}/dashboard` then keeps each project's statistics in Redis for
+`DASHBOARD_CACHE_TTL` (default 60s). Membership is checked on every request, task and column
+writes evict the affected projects, and a Redis outage falls back to PostgreSQL. Keys, commands,
+measurements and a redis-cli walkthrough: [`docs/queries/dashboard.md`](docs/queries/dashboard.md).
+
 ## Test
 
 ```bash
 mvn test                                    # everything
 mvn test -Dtest=TaskServiceTest             # one class
 mvn -Predis-it verify                       # opt-in Redis + real HTTP integration tests
+mvn -Pdashboard-it verify                   # opt-in PostgreSQL + Redis dashboard tests (see below)
 ```
+
+The `dashboard-it` profile needs `compose.redis.yml` and `compose.postgres.yml` running
+(`docker compose -f compose.postgres.yml up -d --wait`): a throwaway PostgreSQL on
+`127.0.0.1:55432`, database `kanban_it`. The tests boot the whole application against it and
+refuse any database that is not on loopback or not named `*_it`.
 
 Tests are plain JUnit 5 + Mockito unit tests (no database needed); `WebLayerTest`
 boots the MVC layer with MockMvc to pin the wire format (validation messages, guard

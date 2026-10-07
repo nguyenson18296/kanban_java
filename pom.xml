@@ -187,5 +187,35 @@
         </plugins>
       </build>
     </profile>
+    <profile>
+      <id>dashboard-it</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <configuration>
+              <includes>
+                <include>**/dashboard/*IT.java</include>
+              </includes>
+              <!-- application.yml imports optional:file:.env relative to the working directory, and a
+                   command-line spring.config.import cannot remove that import: run from target/ so the
+                   developer's .env (pointing at Supabase) can never load. -->
+              <workingDirectory>${project.build.directory}</workingDirectory>
+              <!-- A non-UTC JVM surfaces timestamp vs timestamptz binding mistakes. -->
+              <argLine>-Duser.timezone=Asia/Ho_Chi_Minh</argLine>
+            </configuration>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>integration-test</goal>
+                  <goal>verify</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>

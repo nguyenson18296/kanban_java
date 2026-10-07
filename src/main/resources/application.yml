@@ -72,6 +72,10 @@ app:
     max-requests: ${RATE_LIMIT_MAX_REQUESTS:10}
     window: ${RATE_LIMIT_WINDOW:60s}
     key-prefix: ${RATE_LIMIT_KEY_PREFIX:kanban:local:rate-limit}
+  dashboard-cache:
+    enabled: ${DASHBOARD_CACHE_ENABLED:false}
+    ttl: ${DASHBOARD_CACHE_TTL:60s}
+    key-prefix: ${DASHBOARD_CACHE_KEY_PREFIX:kanban:local:dashboard}
   jwt:
     secret: ${JWT_SECRET}
     expires-in: ${JWT_EXPIRES_IN:1h}

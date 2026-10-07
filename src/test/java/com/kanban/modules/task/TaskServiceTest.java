@@ -5,16 +5,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.kanban.common.exception.ForbiddenException;
+import com.kanban.common.exception.HttpException;
 import com.kanban.common.exception.NotFoundException;
+import com.kanban.modules.dashboard.DashboardCache;
 import com.kanban.modules.kanbancolumn.KanbanColumn;
 import com.kanban.modules.kanbancolumn.KanbanColumnRepository;
+import com.kanban.modules.label.Label;
 import com.kanban.modules.label.LabelRepository;
 import com.kanban.modules.mention.MentionService;
 import com.kanban.modules.notification.events.BaseNotificationEvent;
@@ -37,6 +42,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 /** Port of task.service.spec.ts — "TaskService (KAN-78 subscriptions)" */
 class TaskServiceTest {
@@ -49,6 +55,7 @@ class TaskServiceTest {
   private SubscriptionService subscription;
   private MentionService mention;
   private ProjectAccessService projectAccessService;
+  private DashboardCache dashboardCache;
   private TaskService service;
 
   private static User user(String id) {
@@ -81,8 +88,124 @@ class TaskServiceTest {
     when(mention.resolveMentionedUserIds(any(), anyList())).thenReturn(List.of());
     when(subscription.getSubscriberIds(any())).thenReturn(List.of());
     projectAccessService = mock(ProjectAccessService.class);
+    dashboardCache = mock(DashboardCache.class);
     service = new TaskService(taskRepo, userRepo, labelRepo, columnRepo, positions, events, subscription, mention,
-        projectAccessService);
+        projectAccessService, dashboardCache);
+  }
+
+  private static KanbanColumn columnIn(int id, String projectId) {
+    KanbanColumn c = new KanbanColumn();
+    c.setId(id);
+    c.setProjectId(projectId);
+    return c;
+  }
+
+  /** JSP-44: every write that can change a project's dashboard numbers drops its cached snapshot. */
+  @Nested
+  class DashboardInvalidation {
+    @Test
+    @DisplayName("create evicts the column's project right after the insert, even if the reload then fails")
+    void createEvictsBeforeLaterFailures() {
+      when(columnRepo.findById(1)).thenReturn(Optional.of(columnIn(1, "projA")));
+      when(taskRepo.save(any())).thenAnswer(inv -> {
+        Task t = inv.getArgument(0);
+        t.setId("t1");
+        return t;
+      });
+      when(taskRepo.findByIdWithFullRelations("t1")).thenThrow(new RuntimeException("reload failed"));
+      CreateTaskDto dto = new CreateTaskDto();
+      dto.column_id = 1;
+      dto.title = "T";
+      dto.with("column_id").with("title");
+
+      assertThatThrownBy(() -> service.create(dto, "actor")).isInstanceOf(HttpException.class);
+      verify(dashboardCache).evictAfterCommit("projA");
+    }
+
+    @Test
+    @DisplayName("update evicts the task's project, without an extra lookup when the column is unchanged")
+    void updateEvictsProject() {
+      when(projectAccessService.ensureTaskRole("t1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(taskRepo.findByIdWithFullRelations("t1")).thenReturn(Optional.of(task("t1", "T", "KAN-1", List.of())));
+      UpdateTaskDto dto = new UpdateTaskDto();
+      dto.status = TaskStatus.DONE;
+      dto.with("status");
+
+      service.update("t1", dto, "actor");
+
+      InOrder order = inOrder(taskRepo, dashboardCache);
+      order.verify(taskRepo).save(any());
+      order.verify(dashboardCache).evictAfterCommit("projA");
+      verify(projectAccessService, never()).getProjectIdForTask(any());
+    }
+
+    @Test
+    @DisplayName("update with column_id evicts the old project and the one the task now belongs to")
+    void updateColumnEvictsBothProjects() {
+      when(projectAccessService.ensureTaskRole("t1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(projectAccessService.getProjectIdForTask("t1")).thenReturn("projB");
+      when(taskRepo.findByIdWithFullRelations("t1")).thenReturn(Optional.of(task("t1", "T", "KAN-1", List.of())));
+      UpdateTaskDto dto = new UpdateTaskDto();
+      dto.column_id = 20;
+      dto.with("column_id");
+
+      service.update("t1", dto, "actor");
+
+      verify(dashboardCache).evictAfterCommit("projA", "projB");
+    }
+
+    @Test
+    @DisplayName("remove resolves the projects of the task and its subtasks BEFORE deleting, then evicts them")
+    void removeEvictsTaskTreeProjects() {
+      when(taskRepo.findByIdWithFullRelations("t1")).thenReturn(Optional.of(task("t1", "T", "KAN-1", List.of())));
+      when(taskRepo.findProjectIdsOfTaskTree("t1")).thenReturn(List.of("projA", "projB"));
+
+      service.remove("t1", "actor");
+
+      InOrder order = inOrder(taskRepo, dashboardCache);
+      order.verify(taskRepo).findProjectIdsOfTaskTree("t1");
+      order.verify(taskRepo).deleteById("t1");
+      order.verify(dashboardCache).evictAfterCommit("projA", "projB");
+    }
+
+    @Test
+    @DisplayName("adding and removing assignees evict the task's project")
+    void assigneeChangesEvict() {
+      when(projectAccessService.ensureTaskRole("t1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(taskRepo.findByIdWithFullRelations("t1")).thenReturn(Optional.of(task("t1", "T", "KAN-1", List.of())));
+      when(userRepo.findByIdIn(anyList())).thenReturn(List.of(user("u1")));
+
+      service.addAssignees("t1", List.of("u1"), "actor");
+      service.removeAssignees("t1", List.of("u1"), "actor");
+
+      verify(dashboardCache, times(2)).evictAfterCommit("projA");
+    }
+
+    @Test
+    @DisplayName("move evicts the source and target projects (one key when they are the same)")
+    void moveEvictsSourceAndTarget() {
+      when(projectAccessService.ensureTaskRole("t1", "actor", ProjectRole.MEMBER)).thenReturn("projA");
+      when(taskRepo.findColumnIdRowById("t1")).thenReturn(List.of(10));
+      when(columnRepo.findById(20)).thenReturn(Optional.of(columnIn(20, "projB")));
+      when(taskRepo.findByIdWithFullRelations("t1")).thenReturn(Optional.of(new Task()));
+
+      service.move("t1", 20, 0, "actor");
+
+      verify(dashboardCache).evictAfterCommit("projA", "projB");
+    }
+
+    @Test
+    @DisplayName("label changes and reorders leave the dashboard cache alone")
+    void nonStatWritesDoNotEvict() {
+      when(taskRepo.findByIdWithFullRelations("t1")).thenReturn(Optional.of(task("t1", "T", "KAN-1", List.of())));
+      when(taskRepo.existsById("t1")).thenReturn(true);
+      when(labelRepo.findByIdIn(anyList())).thenReturn(List.of(new Label(1, "bug", "#f00")));
+
+      service.addLabels("t1", List.of(1), "actor");
+      service.reorder("t1", 2, "actor");
+
+      verifyNoInteractions(dashboardCache);
+    }
   }
 
   @Nested
@@ -261,13 +384,6 @@ class TaskServiceTest {
       when(projectAccessService.getProjectIdsForUser("lonely")).thenReturn(List.of());
       assertThat(service.findAllForUser("lonely")).isEmpty();
       verifyNoInteractions(taskRepo);
-    }
-
-    private KanbanColumn columnIn(int id, String projectId) {
-      KanbanColumn c = new KanbanColumn();
-      c.setId(id);
-      c.setProjectId(projectId);
-      return c;
     }
 
     @Test
