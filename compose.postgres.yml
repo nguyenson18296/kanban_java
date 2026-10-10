@@ -1,0 +1,20 @@
+# Dedicated PostgreSQL for the project dashboard integration tests and local benchmarks (JSP-44).
+#   docker compose -f compose.postgres.yml up -d --wait
+# Loopback only, data on tmpfs: every `down` (or container restart) starts from an empty database.
+# The ITs refuse any database that is not on loopback and named *_it, so they cannot reach Supabase.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: kanban_it
+      POSTGRES_USER: kanban_it
+      POSTGRES_PASSWORD: kanban_it
+    ports:
+      - "127.0.0.1:${POSTGRES_IT_PORT:-55432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kanban_it", "-d", "kanban_it"]
+      interval: 2s
+      timeout: 1s
+      retries: 15

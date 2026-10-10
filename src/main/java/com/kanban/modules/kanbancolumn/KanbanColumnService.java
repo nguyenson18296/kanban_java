@@ -7,12 +7,14 @@ import com.kanban.common.exception.InternalServerErrorException;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
 import com.kanban.common.util.PgErrors;
+import com.kanban.modules.dashboard.DashboardCache;
 import com.kanban.modules.kanbancolumn.dto.CreateKanbanColumnDto;
 import com.kanban.modules.kanbancolumn.dto.UpdateKanbanColumnDto;
 import com.kanban.modules.project.ProjectAccessService;
 import com.kanban.modules.project.ProjectRole;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -23,10 +25,13 @@ public class KanbanColumnService {
 
   private final KanbanColumnRepository columnRepository;
   private final ProjectAccessService projectAccessService;
+  private final DashboardCache dashboardCache;
 
-  public KanbanColumnService(KanbanColumnRepository columnRepository, ProjectAccessService projectAccessService) {
+  public KanbanColumnService(KanbanColumnRepository columnRepository, ProjectAccessService projectAccessService,
+      DashboardCache dashboardCache) {
     this.columnRepository = columnRepository;
     this.projectAccessService = projectAccessService;
+    this.dashboardCache = dashboardCache;
   }
 
   public KanbanColumn create(CreateKanbanColumnDto dto, String actorId) {
@@ -92,6 +97,7 @@ public class KanbanColumnService {
     projectAccessService.ensureColumnRole(id, actorId, ProjectRole.ADMIN);
     try {
       KanbanColumn column = getColumnOrThrow(id);
+      String previousProjectId = column.getProjectId();
       // Moving the column to a different project requires admin on the target project too;
       // ensureRole masks a nonexistent/forbidden target as the same 404 (no existence oracle).
       if (dto.project_id != null && !dto.project_id.isEmpty() && !dto.project_id.equals(column.getProjectId())) {
@@ -109,7 +115,12 @@ public class KanbanColumnService {
       if (dto.has("color")) {
         column.setColor(dto.color);
       }
-      return columnRepository.saveAndFlush(column);
+      KanbanColumn saved = columnRepository.saveAndFlush(column);
+      if (!Objects.equals(previousProjectId, saved.getProjectId())) {
+        // JSP-44: every task in the column moved project with it.
+        dashboardCache.evictAfterCommit(previousProjectId, saved.getProjectId());
+      }
+      return saved;
     } catch (HttpException e) {
       throw e;
     } catch (RuntimeException error) {

@@ -72,6 +72,10 @@ VALUES (:name, :position, :color, false, :projectId, now(), now());
 
 `KanbanColumnService.update` → `saveAndFlush(column)` on the row loaded by **#2**, after `project#10`
 (`ensureColumnRole` `admin`, scoped to the column's *current* project). Unique-name violation → 409.
+When the update changes `project_id`, every task in the column changes project with it, so both
+projects' cached dashboards are evicted after the save — Redis only, no SQL (JSP-44,
+[dashboard.md](dashboard.md)). Create and delete evict nothing: a new column is empty and a column
+with tasks cannot be deleted.
 
 ```sql
 UPDATE kanban_columns

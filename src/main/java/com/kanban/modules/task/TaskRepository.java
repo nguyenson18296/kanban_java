@@ -29,6 +29,14 @@ public interface TaskRepository extends JpaRepository<Task, String> {
   List<Task> findSubtasksWithRelations(@Param("parentId") String parentId);
 
   /**
+   * Projects whose dashboards a delete of this task changes (JSP-44): its own and its subtasks', which
+   * cascade with it and may sit in other projects' columns.
+   */
+  @Query("select distinct c.projectId from KanbanColumn c where c.id in "
+      + "(select t.columnId from Task t where t.id = :id or t.parentId = :id)")
+  List<String> findProjectIdsOfTaskTree(@Param("id") String id);
+
+  /**
    * relations: assignees, labels — phase 2 of GET /search/tasks (ids arrive ranked from
    * TaskSearchQueries). Re-applies the caller's CURRENT memberships against the task's CURRENT
    * column, so a task moved out of the caller's projects, or a membership revoked, between the ranked

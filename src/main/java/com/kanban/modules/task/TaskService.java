@@ -11,6 +11,7 @@ import com.kanban.common.util.Dates;
 import com.kanban.common.util.PgErrors;
 import com.kanban.modules.activity.events.TaskActivityAction;
 import com.kanban.modules.activity.events.TaskActivityEvent;
+import com.kanban.modules.dashboard.DashboardCache;
 import com.kanban.modules.kanbancolumn.KanbanColumn;
 import com.kanban.modules.kanbancolumn.KanbanColumnRepository;
 import com.kanban.modules.label.Label;
@@ -59,11 +60,12 @@ public class TaskService {
   private final SubscriptionService subscriptionService;
   private final MentionService mentionService;
   private final ProjectAccessService projectAccessService;
+  private final DashboardCache dashboardCache;
 
   public TaskService(TaskRepository taskRepository, UserRepository userRepository, LabelRepository labelRepository,
       KanbanColumnRepository columnRepository, TaskPositionFunctions positionFunctions, EventBus eventBus,
       SubscriptionService subscriptionService, MentionService mentionService,
-      ProjectAccessService projectAccessService) {
+      ProjectAccessService projectAccessService, DashboardCache dashboardCache) {
     this.taskRepository = taskRepository;
     this.userRepository = userRepository;
     this.labelRepository = labelRepository;
@@ -73,6 +75,7 @@ public class TaskService {
     this.subscriptionService = subscriptionService;
     this.mentionService = mentionService;
     this.projectAccessService = projectAccessService;
+    this.dashboardCache = dashboardCache;
   }
 
   private void ensureTaskExists(String id) {
@@ -124,6 +127,8 @@ public class TaskService {
         task.setLabels(new LinkedHashSet<>(resolveLabels(labelIds)));
       }
       Task saved = taskRepository.save(task);
+      // JSP-44: the save has committed (no outer transaction); evict before anything below can throw.
+      dashboardCache.evictAfterCommit(column.getProjectId());
       Task result = findOneById(saved.getId());
 
       // KAN-78: subscriptions + assignment notification on create.
@@ -202,7 +207,7 @@ public class TaskService {
   }
 
   public Task update(String id, UpdateTaskDto dto, String actorId) {
-    projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
+    String projectId = projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(id);
       TaskStatus previousStatus = task.getStatus();
@@ -278,6 +283,13 @@ public class TaskService {
         task.setLabels(new LinkedHashSet<>(newLabels));
       }
       taskRepository.save(task);
+      // JSP-44: any PATCH can change status, due_date, assignees or the column (even into another
+      // project, looked up after the save). One DEL is cheaper than tracking which fields changed.
+      if (dto.has("column_id") && dto.column_id != null) {
+        dashboardCache.evictAfterCommit(projectId, projectAccessService.getProjectIdForTask(id));
+      } else {
+        dashboardCache.evictAfterCommit(projectId);
+      }
       Task updated = findOneById(id);
 
       // KAN-78: auto-subscribe newly-added assignees and description mentions,
@@ -383,9 +395,12 @@ public class TaskService {
     projectAccessService.ensureTaskRole(id, actorId, ProjectRole.MEMBER);
     try {
       findOneById(id);
+      // JSP-44: subtasks go with it (ON DELETE CASCADE) and may sit in other projects' columns.
+      List<String> projectIds = taskRepository.findProjectIdsOfTaskTree(id);
       // delete through the id so Hibernate removes a managed instance (a detached
       // entity with its loaded subtasks graph would fail the merge step)
       taskRepository.deleteById(id);
+      dashboardCache.evictAfterCommit(projectIds.toArray(String[]::new));
     } catch (HttpException e) {
       throw e;
     } catch (RuntimeException e) {
@@ -395,7 +410,7 @@ public class TaskService {
   }
 
   public Task addAssignees(String taskId, List<String> userIds, String actorId) {
-    projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
+    String projectId = projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(taskId);
       List<User> users = resolveUsers(userIds);
@@ -408,6 +423,7 @@ public class TaskService {
       merged.addAll(newUsers);
       task.setAssignees(merged);
       taskRepository.save(task);
+      dashboardCache.evictAfterCommit(projectId);
       Task result = findOneById(taskId);
       // KAN-78: auto-subscribe newly-added assignees and notify them.
       if (!newUsers.isEmpty()) {
@@ -431,7 +447,7 @@ public class TaskService {
   }
 
   public Task removeAssignees(String taskId, List<String> userIds, String actorId) {
-    projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
+    String projectId = projectAccessService.ensureTaskRole(taskId, actorId, ProjectRole.MEMBER);
     try {
       Task task = findOneById(taskId);
       resolveUsers(userIds);
@@ -445,6 +461,7 @@ public class TaskService {
       }
       task.setAssignees(remaining);
       taskRepository.save(task);
+      dashboardCache.evictAfterCommit(projectId);
       Task result = findOneById(taskId);
       if (actorId != null && !removedUsers.isEmpty()) {
         emitActivity(actorId, taskId, TaskActivityAction.TASK_ASSIGNEE_REMOVED,
@@ -548,6 +565,8 @@ public class TaskService {
         projectAccessService.ensureRole(targetColumn.getProjectId(), actorId, ProjectRole.MEMBER);
       }
       positionFunctions.moveTask(id, columnId, position);
+      // JSP-44: the target column may be archived or in another project.
+      dashboardCache.evictAfterCommit(sourceProjectId, targetColumn.getProjectId());
       Task result = findOneById(id);
       if (actorId != null) {
         emitActivity(actorId, id, TaskActivityAction.TASK_MOVED, Json.map(

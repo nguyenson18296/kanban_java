@@ -49,6 +49,13 @@ JAV-20 only prepended the gate to them.
 | 7 | Task exists? | `TaskRepository.existsById` | reorder / reorder-subtask precheck |
 | 8 | Column by id | `KanbanColumnRepository.findById` | `POST /tasks`, `PATCH /tasks/{id}/move` |
 | 9 | Tasks by id, re-scoped to the caller's memberships, with assignees and labels | `TaskRepository.findByIdInForUserWithAssigneesAndLabels` | `GET /search/tasks` phase 2 (JAV-34) — see [search.md](search.md) query 4 |
+| 10 | Projects of a task and its subtasks | `TaskRepository.findProjectIdsOfTaskTree` | `DELETE /tasks/{id}`, before the delete (JSP-44 dashboard eviction) |
+
+**Dashboard cache (JSP-44).** Task writes that can change a project's statistics drop its cached
+dashboard right after the save — create, `PATCH` (any field), delete, assignee add/remove and move;
+labels and reorders do not. `PATCH` with `column_id` additionally runs [project.md](project.md)
+query 9 after the save to evict the project the task now belongs to. Per-route list and Redis
+commands: [dashboard.md](dashboard.md).
 
 ## Queries
 
@@ -134,4 +141,20 @@ FROM tasks t
 WHERE t.id IN (:ids)
   AND t.column_id IN (SELECT c.id FROM kanban_columns c
                       WHERE c.project_id IN (SELECT m.project_id FROM project_members m WHERE m.user_id = :userId));
+```
+
+### 10. Projects of a task and its subtasks (JSP-44)
+
+`TaskRepository.findProjectIdsOfTaskTree(id)` — JPQL. `DELETE /tasks/{id}` runs it just before the
+delete: the subtasks go with the task (`ON DELETE CASCADE` on `parent_id`) and may sit in other
+projects' columns, so every one of those projects' cached dashboards is evicted afterwards
+([dashboard.md](dashboard.md)). A BitmapOr of the `tasks` primary key and `idx_tasks_parent_id`
+(0.2 ms on the [benchmark dataset](dashboard-bench-seed.sql)); `kanban_columns` is small enough
+to scan.
+
+```sql
+SELECT DISTINCT c.project_id
+FROM kanban_columns c
+WHERE c.id IN (SELECT t.column_id FROM tasks t
+               WHERE t.id = CAST(:id AS uuid) OR t.parent_id = CAST(:id AS uuid));
 ```

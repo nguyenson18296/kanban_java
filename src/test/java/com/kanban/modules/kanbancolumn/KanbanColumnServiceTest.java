@@ -9,11 +9,13 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.kanban.common.exception.ForbiddenException;
 import com.kanban.common.exception.NotFoundException;
 import com.kanban.common.json.Json;
+import com.kanban.modules.dashboard.DashboardCache;
 import com.kanban.modules.kanbancolumn.dto.CreateKanbanColumnDto;
 import com.kanban.modules.kanbancolumn.dto.UpdateKanbanColumnDto;
 import com.kanban.modules.project.ProjectAccessService;
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.Test;
 class KanbanColumnServiceTest {
   private KanbanColumnRepository columnRepository;
   private ProjectAccessService projectAccessService;
+  private DashboardCache dashboardCache;
   private KanbanColumnService service;
 
   private static CreateKanbanColumnDto createDto(String projectId, String name) {
@@ -60,7 +63,8 @@ class KanbanColumnServiceTest {
   void setUp() {
     columnRepository = mock(KanbanColumnRepository.class);
     projectAccessService = mock(ProjectAccessService.class);
-    service = new KanbanColumnService(columnRepository, projectAccessService);
+    dashboardCache = mock(DashboardCache.class);
+    service = new KanbanColumnService(columnRepository, projectAccessService, dashboardCache);
     when(columnRepository.saveAndFlush(any(KanbanColumn.class))).thenAnswer(i -> i.getArgument(0));
   }
 
@@ -213,5 +217,31 @@ class KanbanColumnServiceTest {
 
     verify(projectAccessService).ensureColumnRole(5, "actor", ProjectRole.ADMIN);
     verify(columnRepository).deleteById(5);
+  }
+
+  @Test
+  @DisplayName("moving a column to another project evicts both projects' dashboards (its tasks moved too, JSP-44)")
+  void updateMoveEvictsBothDashboards() {
+    when(columnRepository.findById(5)).thenReturn(Optional.of(column(5, "Todo", "p1")));
+
+    service.update(5, moveDto("p2"), "actor");
+
+    verify(dashboardCache).evictAfterCommit("p1", "p2");
+  }
+
+  @Test
+  @DisplayName("renaming a column and creating/deleting (always empty) columns leave the dashboard cache alone (JSP-44)")
+  void nonStatColumnWritesDoNotEvict() {
+    when(columnRepository.findById(5)).thenReturn(Optional.of(column(5, "Todo", "p1")));
+    UpdateKanbanColumnDto rename = new UpdateKanbanColumnDto();
+    rename.name = "Renamed";
+    rename.with("name");
+
+    service.update(5, rename, "actor");
+    service.update(5, moveDto("p1"), "actor");
+    service.create(createDto("p1", "Todo"), "actor");
+    service.remove(5, "actor");
+
+    verifyNoInteractions(dashboardCache);
   }
 }

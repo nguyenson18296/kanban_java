@@ -44,6 +44,9 @@ import com.kanban.modules.auth.interfaces.JwtPayload;
 import com.kanban.modules.board.BoardController;
 import com.kanban.modules.board.BoardService;
 import com.kanban.modules.board.dto.BoardResponse;
+import com.kanban.modules.dashboard.DashboardController;
+import com.kanban.modules.dashboard.DashboardService;
+import com.kanban.modules.dashboard.dto.DashboardResponse;
 import com.kanban.modules.dependency.DependencyController;
 import com.kanban.modules.dependency.DependencyService;
 import com.kanban.modules.dependency.dto.TaskDependenciesResponseDto;
@@ -89,7 +92,7 @@ import org.springframework.web.multipart.MultipartFile;
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
     BoardController.class, TeamController.class, LabelController.class, SearchController.class,
-    DependencyController.class, AttachmentController.class},
+    DependencyController.class, AttachmentController.class, DashboardController.class},
     properties = "app.rate-limit.enabled=true")
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     ProjectRoleInterceptor.class, AppService.class, RateLimitConfig.class})
@@ -136,6 +139,9 @@ class WebLayerTest {
 
   @MockitoBean
   private AttachmentService attachmentService;
+
+  @MockitoBean
+  private DashboardService dashboardService;
 
   private void assertUnauthorized(MockHttpServletRequestBuilder request) throws Exception {
     mvc.perform(request)
@@ -222,6 +228,51 @@ class WebLayerTest {
     mvc.perform(get("/api/board/UrzWUH3e").header("Authorization", "Bearer tok"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.columns").isArray());
+  }
+
+  @Test
+  @DisplayName("GET /projects/:projectId/dashboard without token → 401 (JSP-44)")
+  void dashboardRequiresToken() throws Exception {
+    assertUnauthorized(get("/api/projects/UrzWUH3e/dashboard"));
+    verifyNoInteractions(dashboardService);
+  }
+
+  @Test
+  @DisplayName("GET /projects/:projectId/dashboard as a non-member → masked 404 before any stats/cache read (JSP-44)")
+  void dashboardNonMemberMasked404() throws Exception {
+    authenticateU1();
+    when(projectAccessService.ensureRole(eq("UrzWUH3e"), eq("u1"), any()))
+        .thenThrow(new NotFoundException(Json.map(
+            "statusCode", 404, "message", "Project with id \"UrzWUH3e\" not found")));
+
+    mvc.perform(get("/api/projects/UrzWUH3e/dashboard").header("Authorization", "Bearer tok"))
+        .andExpect(status().isNotFound())
+        .andExpect(content().json(
+            "{\"statusCode\":404,\"message\":\"Project with id \\\"UrzWUH3e\\\" not found\"}",
+            JsonCompareMode.STRICT));
+    verifyNoInteractions(dashboardService);
+  }
+
+  @Test
+  @DisplayName("GET /projects/:projectId/dashboard as a viewer → 200 with the snake_case contract (JSP-44)")
+  void dashboardViewerOk() throws Exception {
+    authenticateU1();
+    when(projectAccessService.ensureRole(eq("UrzWUH3e"), eq("u1"), any()))
+        .thenReturn(new ProjectMember("UrzWUH3e", "u1", ProjectRole.VIEWER));
+    when(dashboardService.get("UrzWUH3e")).thenReturn(new DashboardResponse("UrzWUH3e", 12, 2,
+        new DashboardResponse.ByStatus(5, 3, 1, 2, 1),
+        List.of(new DashboardResponse.AssigneeCount(OTHER_USER_ID, 4)), 3,
+        Instant.parse("2026-10-06T07:00:00Z")));
+
+    mvc.perform(get("/api/projects/UrzWUH3e/dashboard").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(content().json("""
+            {"project_id":"UrzWUH3e","total_tasks":12,"overdue_tasks":2,
+             "by_status":{"open":5,"in_progress":3,"in_review":1,"done":2,"cancelled":1},
+             "by_assignee":[{"user_id":"22222222-2222-4222-8222-222222222222","task_count":4}],
+             "unassigned_tasks":3,"computed_at":"2026-10-06T07:00:00.000Z"}
+            """, JsonCompareMode.STRICT));
+    verify(projectAccessService).ensureRole("UrzWUH3e", "u1", ProjectRole.VIEWER);
   }
 
   @Test
