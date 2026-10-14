@@ -20,7 +20,7 @@ create, update, delete, find) is not documented yet — add it here when those p
 |---|---|---|---|
 | 1 | Membership lookup by PK | `ProjectMemberRepository.findByProjectIdAndUserId` | every `ProjectAccessService.ensureRole` / `getMembership` call (see [Endpoint sequences](#endpoint-query-sequences)) |
 | 2 | Membership exists? | `ProjectMemberRepository.existsByProjectIdAndUserId` | `POST /projects/{projectId}/teams/{teamId}/members` |
-| 3 | Project ids of a user | `ProjectMemberRepository.findProjectIdsByUserId` | Socket.IO connect (presence rooms); `ProjectAccessService.getProjectIdsForUser`; `GET /tasks` list scoping (JAV-20) |
+| 3 | Project ids of a user | `ProjectMemberRepository.findProjectIdsByUserId` | Socket.IO connect (presence rooms); each presence online/offline transition (JSP-42); `ProjectAccessService.getProjectIdsForUser`; `GET /tasks` list scoping (JAV-20) |
 | 4 | Members of a project + user | `ProjectMemberRepository.findByProjectIdWithUserOrderByJoinedAtAsc` | `GET /projects/{id}/members` |
 | 5 | Projects of a user + project + creator | `ProjectMemberRepository.findByUserIdWithProjectOrderByJoinedAtDesc` | `GET /projects`, `GET /users/me/projects`, `GET /users/{id}/projects` |
 | 6 | Existing memberships among candidates | `ProjectMemberRepository.findByProjectIdAndUserIdIn` | `POST /projects/{id}/members`, `DELETE /projects/{id}/members` (target roles) |
@@ -70,7 +70,8 @@ WHERE project_id = :projectId
 `ProjectMemberRepository.findProjectIdsByUserId(userId)` — JPQL
 `select m.projectId from ProjectMember m where m.userId = :userId`.
 Used by `PresenceService.handleConnectionOpened` (joins the socket to every `project:<id>`
-room) and exposed as `ProjectAccessService.getProjectIdsForUser`. Uses `idx_project_members_user_id`.
+room), by `PresenceBroadcaster.send` (rooms for one `presence:update`, once per transition) and
+exposed as `ProjectAccessService.getProjectIdsForUser`. Uses `idx_project_members_user_id`.
 
 ```sql
 SELECT project_id

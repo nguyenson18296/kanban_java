@@ -53,6 +53,9 @@ import com.kanban.modules.dependency.dto.TaskDependenciesResponseDto;
 import com.kanban.modules.dependency.dto.TaskSummaryDto;
 import com.kanban.modules.label.LabelController;
 import com.kanban.modules.label.LabelService;
+import com.kanban.modules.presence.PresenceController;
+import com.kanban.modules.presence.PresenceService;
+import com.kanban.modules.presence.dto.PresenceStateDto;
 import com.kanban.modules.project.ProjectAccessService;
 import com.kanban.modules.project.ProjectMember;
 import com.kanban.modules.project.ProjectRole;
@@ -92,7 +95,7 @@ import org.springframework.web.multipart.MultipartFile;
  */
 @WebMvcTest(controllers = {AppController.class, AuthController.class, UserController.class,
     BoardController.class, TeamController.class, LabelController.class, SearchController.class,
-    DependencyController.class, AttachmentController.class, DashboardController.class},
+    DependencyController.class, AttachmentController.class, DashboardController.class, PresenceController.class},
     properties = "app.rate-limit.enabled=true")
 @Import({WebMvcConfig.class, JacksonConfig.class, GlobalExceptionHandler.class, JwtAuthInterceptor.class,
     ProjectRoleInterceptor.class, AppService.class, RateLimitConfig.class})
@@ -142,6 +145,9 @@ class WebLayerTest {
 
   @MockitoBean
   private DashboardService dashboardService;
+
+  @MockitoBean
+  private PresenceService presenceService;
 
   private void assertUnauthorized(MockHttpServletRequestBuilder request) throws Exception {
     mvc.perform(request)
@@ -273,6 +279,34 @@ class WebLayerTest {
              "unassigned_tasks":3,"computed_at":"2026-10-06T07:00:00.000Z"}
             """, JsonCompareMode.STRICT));
     verify(projectAccessService).ensureRole("UrzWUH3e", "u1", ProjectRole.VIEWER);
+  }
+
+  @Test
+  @DisplayName("GET /presence/me → 200 with the camelCase presence shape (JSP-42)")
+  void presenceMe() throws Exception {
+    authenticateU1();
+    when(presenceService.getOnlineStates(List.of("u1")))
+        .thenReturn(List.of(new PresenceStateDto("u1", true, 2, "2026-10-14T01:02:03.456Z")));
+    mvc.perform(get("/api/presence/me").header("Authorization", "Bearer tok"))
+        .andExpect(status().isOk())
+        .andExpect(content().json("""
+            {"userId":"u1","isOnline":true,"connectionCount":2,"lastChangedAt":"2026-10-14T01:02:03.456Z"}
+            """, JsonCompareMode.STRICT));
+  }
+
+  @Test
+  @DisplayName("GET /presence with Redis down → generic 503, no internals (JSP-42)")
+  void presenceRedisDown() throws Exception {
+    authenticateU1();
+    when(presenceService.getOnlineStates(any())).thenThrow(
+        new ServiceUnavailableException("Presence temporarily unavailable. Please try again later."));
+    mvc.perform(get("/api/presence?userIds=" + OTHER_USER_ID).header("Authorization", "Bearer tok"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(content().json("""
+            {"message":"Presence temporarily unavailable. Please try again later.",
+             "error":"Service Unavailable","statusCode":503}
+            """, JsonCompareMode.STRICT));
+    verify(presenceService).getOnlineStates(List.of(OTHER_USER_ID));
   }
 
   @Test

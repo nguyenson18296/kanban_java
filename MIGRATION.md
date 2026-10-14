@@ -126,7 +126,7 @@ DTOs use, with the **same messages and ordering**:
 | `subscription/subscription.controller.spec.ts` | `SubscriptionControllerTest` | 5 |
 | `events/events.gateway.spec.ts` (`EventsGateway`) | `EventsGatewayTest` | 12 |
 | `events/events.gateway.spec.ts` (`EventsService`) | `EventsServiceTest` | 3 |
-| `presence/presence.service.spec.ts` | `PresenceServiceTest` | 19 (incl. the concurrent-connect race) |
+| `presence/presence.service.spec.ts` | `PresenceServiceTest` (room join, hand-off to the tracker) + `PresenceTrackerTest`, `PresenceBroadcasterTest` (transitions, broadcasts) | 11 (incl. the concurrent-connect race) + 10 + 3; counting moved to Redis (JSP-42) |
 | `presence/presence.controller.spec.ts` | `PresenceControllerTest` | 2 |
 | — (new) | `ClassValidatorTest`, `UtilsTest` | validation-message parity, durations, dates, sanitizer, email |
 | — (new, JAV-34) | `SearchServiceTest`, `BoardServiceTest` | membership scoping, blank query, ranked order, snippet escaping, pagination; board blank-search handling |
@@ -152,6 +152,15 @@ fill/evict race stays bounded by the TTL; reads never extend it) and `DashboardH
 over HTTP: gate before cache, hits, TTL expiry, eviction, uncommitted data, corrupt entries, Redis
 outage). They boot the full application against the dedicated `compose.postgres.yml` database
 (loopback, `*_it` name enforced) and run from `target/` so the developer's `.env` never loads.
+
+JSP-42 moves presence to Redis. `PresenceTrackerTest` covers transitions, pruning, the owner
+fallback, Redis failure/recovery, the reconcile wait and shutdown; `PresenceBroadcasterTest` the
+payload and ordering. In `redis-it`: `RedisPresenceStoreIT` (2 tabs → 2/1/0 across two backends,
+idempotency, 100 concurrent connects/disconnects → one online and one offline, expiry and
+reconcile, heartbeats leave `lastChangedAt` alone, batching, 503), `PresenceTrackerIT` (a killed
+backend is reconciled by a peer, a Redis outage longer than the TTL never reports offline, lost
+keys come back, graceful shutdown) and `PresenceHttpIT` (two HTTP backends read the same state,
+shutdown unregisters before Redis closes, generic 503).
 
 Run: `mvn test` (no external services required). Redis integration tests are opt-in:
 `mvn -Predis-it verify` against a running local Redis; no PostgreSQL required. Dashboard
@@ -271,3 +280,16 @@ of `varchar` — the same untyped-parameter behavior node-postgres has.
     Writes made by the Nest app on the shared database do not evict — those numbers refresh
     when the TTL expires. Contract: `docs/api-contracts/project-dashboard.md`; queries and cache:
     `docs/queries/dashboard.md`.
+16. **Presence in Redis (JSP-42).** Nest kept presence in process memory, so every instance had
+    its own picture and a restart reset everyone to offline. The port keeps it in Redis (required
+    for presence, no in-memory fallback): each backend registers its sockets, refreshes them every
+    `PRESENCE_HEARTBEAT_INTERVAL` (10s) and a socket nobody refreshes for `PRESENCE_CONNECTION_TTL`
+    (30s) expires, so a crashed backend's users go offline within ~40s. Online/offline transitions
+    are decided atomically in Lua, once across all backends. The HTTP shapes and the
+    `presence:update` payload are unchanged, but `timestamp` now equals `lastChangedAt` (the
+    transition time on Redis's clock, not the send time), `lastChangedAt` survives restarts, and
+    the presence routes return a generic 503 when Redis is down. `presence:update` still reaches
+    only the clients of the backend that saw the change (no cross-instance fan-out), so clients
+    refetch presence on connect. The Socket.IO ping window is configurable
+    (`SOCKET_IO_PING_INTERVAL` / `SOCKET_IO_PING_TIMEOUT`, socket.io's 25s/20s by default).
+    Contract: `docs/api-contracts/socket-events.md` §4; keys and commands: `docs/queries/presence.md`.

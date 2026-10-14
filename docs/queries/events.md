@@ -21,7 +21,7 @@ The Socket.IO server runs on its own port (`SOCKET_IO_PORT`, default 1997).
 |---|---|---|---|
 | 1 | User by id (= `user#2`) | `WsJwtGuard.validateToken` → `AuthService.validateUserById` → `UserRepository.findById` | CONNECT with `auth.token`, `token:refresh` |
 | 2 | Membership lookup by PK (= `project#1`) | `EventsGateway.handleBoardJoin` → `ProjectAccessService.ensureRole` → `ProjectMemberRepository.findByProjectIdAndUserId` | `board:join` |
-| 3 | Project ids of a user (= `project#3`) | `PresenceService.handleConnectionOpened` → `ProjectMemberRepository.findProjectIdsByUserId` | first socket of a user after a successful CONNECT (async, presence module) |
+| 3 | Project ids of a user (= `project#3`) | `PresenceService.handleConnectionOpened`, `PresenceBroadcaster.send` → `ProjectMemberRepository.findProjectIdsByUserId` | first socket of a user on this backend after a successful CONNECT (async, presence module); once per online/offline transition (JSP-42) |
 
 ## Queries
 
@@ -67,7 +67,9 @@ WHERE project_id = :projectId
 Not run by the gateway itself: `handleConnection` emits `WsConnectionOpenedEvent`, and the
 `@Async` presence listener resolves the user's projects once per user (first socket) and joins the
 socket to every `project:<id>` room via `SocketServer.joinRooms`. Listed because it is what puts a
-socket into project rooms without a `board:join`.
+socket into project rooms without a `board:join`. Since JSP-42 `PresenceBroadcaster` also runs it
+once per online/offline transition, to pick the rooms for `presence:update` (the user may have no
+socket on the backend that detected the change). Redis presence commands: `presence.md`.
 
 ```sql
 -- = project.md #3
@@ -80,7 +82,8 @@ WHERE user_id = :userId;
 
 | Message | Queries, in order |
 |---|---|
-| CONNECT (`auth.token`) | **#1** (`user#2`) → `connection:established`; then async **#3** (`project#3`, presence auto-join + `presence:update`) |
+| CONNECT (`auth.token`) | **#1** (`user#2`) → `connection:established`; then async **#3** (`project#3`, presence auto-join), then Redis registration; on an online transition **#3** again → `presence:update` |
+| disconnect | Redis unregistration; on an offline transition **#3** → `presence:update` |
 | `token:refresh` `{ token }` | **#1** (`user#2`) → re-join `user:<id>` → `token:refresh:success` |
 | `board:join` `{ projectId }` | **#2** (`project#1`, `viewer`) → join `project:<id>` → `board:join:success`; any failure → `board:join:error` (generic) |
 | `board:leave` `{ projectId }` | none → leave `project:<id>` → `board:leave:success` |

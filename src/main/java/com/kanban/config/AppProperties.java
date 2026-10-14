@@ -1,5 +1,6 @@
 package com.kanban.config;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** Environment-driven settings; names mirror the Nest app's env vars. */
@@ -9,7 +10,7 @@ public record AppProperties(String env, Jwt jwt, RefreshToken refreshToken, Sock
 
   public record RefreshToken(String expiresIn) {}
 
-  public record SocketIo(int port, boolean enabled) {}
+  public record SocketIo(int port, boolean enabled, Duration pingInterval, Duration pingTimeout) {}
 
   public boolean isProduction() {
     return "production".equals(env);
