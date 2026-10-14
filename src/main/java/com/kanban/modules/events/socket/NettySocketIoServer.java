@@ -71,6 +71,8 @@ public class NettySocketIoServer implements SocketServer {
     Configuration config = new Configuration();
     config.setPort(props.socketIo().port());
     config.setOrigin("*");
+    config.setPingInterval((int) props.socketIo().pingInterval().toMillis());
+    config.setPingTimeout((int) props.socketIo().pingTimeout().toMillis());
     config.setAuthorizationListener(data -> new AuthorizationResult(true));
     server = new SocketIOServer(config);
 
@@ -141,6 +143,12 @@ public class NettySocketIoServer implements SocketServer {
     if (client != null) {
       client.joinRooms(new HashSet<>(rooms));
     }
+  }
+
+  @Override
+  public boolean isConnected(String socketId) {
+    // netty-socketio drops the client from this lookup before it runs the disconnect listeners.
+    return server != null && server.getClient(UUID.fromString(socketId)) != null;
   }
 
   private NettySocketClient wrap(SocketIOClient client) {

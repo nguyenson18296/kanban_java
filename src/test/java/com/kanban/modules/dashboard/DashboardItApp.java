@@ -49,7 +49,8 @@ final class DashboardItApp {
         "--spring.data.redis.host=" + REDIS_HOST, "--spring.data.redis.port=" + redisPort,
         "--spring.data.redis.username=", "--spring.data.redis.password=", "--spring.data.redis.database=0",
         "--app.dashboard-cache.enabled=true", "--app.dashboard-cache.ttl=" + cacheTtl.toMillis() + "ms",
-        "--app.dashboard-cache.key-prefix=" + keyPrefix);
+        "--app.dashboard-cache.key-prefix=" + keyPrefix,
+        "--app.presence.key-prefix=" + keyPrefix + ":presence");
     for (PropertySource<?> source : app.getEnvironment().getPropertySources()) {
       if (source.getName().contains(".env")) {
         app.close();

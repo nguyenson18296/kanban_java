@@ -76,6 +76,10 @@ app:
     enabled: ${DASHBOARD_CACHE_ENABLED:false}
     ttl: ${DASHBOARD_CACHE_TTL:60s}
     key-prefix: ${DASHBOARD_CACHE_KEY_PREFIX:kanban:local:dashboard}
+  presence:
+    heartbeat-interval: ${PRESENCE_HEARTBEAT_INTERVAL:10s}
+    connection-ttl: ${PRESENCE_CONNECTION_TTL:30s}
+    key-prefix: ${PRESENCE_KEY_PREFIX:kanban:local:presence}
   jwt:
     secret: ${JWT_SECRET}
     expires-in: ${JWT_EXPIRES_IN:1h}
@@ -84,6 +88,9 @@ app:
   socket-io:
     port: ${SOCKET_IO_PORT:1997}
     enabled: ${SOCKET_IO_ENABLED:true}
+    # A client that stops answering pings is disconnected after interval + timeout (45s by default).
+    ping-interval: ${SOCKET_IO_PING_INTERVAL:25s}
+    ping-timeout: ${SOCKET_IO_PING_TIMEOUT:20s}
   storage:
     endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
     region: ${STORAGE_REGION:us-east-1}

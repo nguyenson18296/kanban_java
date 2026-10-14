@@ -9,4 +9,7 @@ public interface SocketServer {
 
   /** {@code server.in(socketId).socketsJoin(rooms)} */
   void joinRooms(String socketId, List<String> rooms);
+
+  /** False once the socket has started disconnecting (and for unknown ids). */
+  boolean isConnected(String socketId);
 }

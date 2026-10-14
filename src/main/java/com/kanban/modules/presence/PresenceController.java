@@ -30,6 +30,7 @@ public class PresenceController {
   @GetMapping
   @Operation(summary = "Bulk presence lookup")
   @ApiResponse(responseCode = "200")
+  @ApiResponse(responseCode = "503", description = "Presence store (Redis) unavailable")
   public PresenceListResponseDto getMany(@ValidatedQuery GetPresenceQueryDto query) {
     return new PresenceListResponseDto(presenceService.getOnlineStates(query.userIds));
   }
@@ -37,7 +38,8 @@ public class PresenceController {
   @GetMapping("/me")
   @Operation(summary = "Current user presence")
   @ApiResponse(responseCode = "200")
+  @ApiResponse(responseCode = "503", description = "Presence store (Redis) unavailable")
   public PresenceStateDto getMe(@CurrentUser("id") String userId) {
-    return presenceService.getOnlineStates(List.of(userId)).get(0);
+    return presenceService.getOnlineStates(List.of(userId)).getFirst();
   }
 }

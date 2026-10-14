@@ -94,6 +94,23 @@ DASHBOARD_CACHE_ENABLED=true mvn spring-boot:run
 writes evict the affected projects, and a Redis outage falls back to PostgreSQL. Keys, commands,
 measurements and a redis-cli walkthrough: [`docs/queries/dashboard.md`](docs/queries/dashboard.md).
 
+## Online/offline presence (JSP-42)
+
+**Requires Redis** (same `REDIS_*` connection; no in-memory fallback). Without it the app still
+starts, but `GET /api/presence` answers 503 and nobody is tracked:
+
+```bash
+docker compose -f compose.redis.yml up -d --wait
+mvn spring-boot:run
+```
+
+Every backend sharing a `PRESENCE_KEY_PREFIX` sees the same online users and connection counts.
+Each backend refreshes its sockets every `PRESENCE_HEARTBEAT_INTERVAL` (10s); a socket nobody
+refreshes for `PRESENCE_CONNECTION_TTL` (30s) expires, so a crashed backend's users go offline
+within ~40s. Keys, Lua scripts, timings, failure behavior and a step-by-step redis-cli and
+two-backend walkthrough: [`docs/queries/presence.md`](docs/queries/presence.md). Frontend contract:
+[`docs/api-contracts/socket-events.md`](docs/api-contracts/socket-events.md) §4.
+
 ## Test
 
 ```bash
@@ -117,7 +134,9 @@ a running local Redis (the Compose command above); override its address with
 `-Dredis.it.host=127.0.0.1 -Dredis.it.port=6379`. It uses unique test keys and cleans
 them up without `FLUSHDB`. HTTP integration tests start isolated Tomcat instances
 on random ports with a mocked auth service; they do not access PostgreSQL or load
-the developer's `.env`. See the learning guide for the scenarios covered.
+the developer's `.env`. See the learning guide for the scenarios covered; the presence
+scenarios (two backends, a killed backend, Redis outage and recovery) are listed in
+[`docs/queries/presence.md`](docs/queries/presence.md).
 
 ## Project layout
 

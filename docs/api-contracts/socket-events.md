@@ -17,6 +17,10 @@ frontend (Vite + React + TanStack Query); §7 is a reference implementation you 
 
 - 2026-09-12 (JAV-22): added `board:join` / `board:leave` and their replies; room broadcasts via
   `emitToProject` reserved (nothing emitted yet, see §5).
+- 2026-10-14 (JSP-42): presence lives in Redis, shared by every backend and kept across restarts.
+  `presence:update.timestamp` now equals the user's `lastChangedAt`; with several backends some
+  events do not reach you, so **refetch presence on connect / focus / interval and drop stale
+  events** (§4). The presence HTTP endpoints can answer `503` when Redis is down.
 
 ---
 
@@ -37,7 +41,8 @@ What the server does on connect:
    deleted or deactivated account fails even with a syntactically valid token.
 2. Success → joins the socket to `user:<userId>` and emits **`connection:established`** `{ userId }`.
    Shortly after (async) the presence module joins the socket to **every `project:<id>` room the
-   user is a member of** and broadcasts `presence:update` to those rooms.
+   user is a member of** and, if this is the user's first live socket on any backend, broadcasts
+   `presence:update` to those rooms.
 3. Failure → emits **`connection:error`** `{ message: "Authentication failed" }` and disconnects the
    socket ~50 ms later. Also happens when no `auth` payload arrives within **2 s** of the Engine.IO
    handshake.
@@ -123,14 +128,32 @@ interface PresenceUpdate {
   userId: string;
   isOnline: boolean;
   connectionCount: number; // 0 when offline
-  timestamp: string;       // ISO 8601
+  timestamp: string;       // ISO 8601, server (Redis) clock — equals the user's lastChangedAt
 }
 ```
 
-Broadcast to **every `project:<id>` room the user belongs to** when their **first** socket connects
-(`isOnline: true`) and when their **last** socket disconnects (`isOnline: false, connectionCount: 0`).
-Additional tabs of an already-online user emit nothing. You receive updates for a user only while
-you share at least one project room with them.
+Broadcast to **every `project:<id>` room the user belongs to** when the user goes online (first live
+socket on **any** backend, `isOnline: true`) and when the user goes offline (no live socket left
+anywhere, `isOnline: false, connectionCount: 0`). More tabs, closing a non-last tab and the server's
+heartbeats emit nothing. `connectionCount` counts sockets on every backend. You receive updates for
+a user only while you share at least one project room with them.
+
+**Several backends (JSP-42).** The state is shared through Redis, but the event is sent only by the
+backend that saw the change, and only to its own sockets (no cross-backend fan-out yet). So:
+
+- **Refetch** `GET /api/presence` on every `connect` (including reconnects), on window focus and on
+  an interval (30 s is enough);
+- **Apply an event only if `timestamp >= lastChangedAt`** of the state you hold; an older event can
+  arrive after a refetch.
+
+When does a user go offline (defaults)?
+
+| Situation | Offline after | Event |
+|---|---|---|
+| Last tab closed / `socket.disconnect()` | immediately | yes |
+| Client loses its network | ≤ ~45 s (Socket.IO ping 25 s + timeout 20 s) | yes |
+| The client's backend crashes | ≤ ~40 s (socket TTL 30 s + heartbeat 10 s) | yes, sent by another backend |
+| The client's backend shuts down normally | immediately | no — its clients reconnect elsewhere |
 
 Initial state comes from HTTP (both require the bearer token):
 
@@ -138,9 +161,13 @@ Initial state comes from HTTP (both require the bearer token):
 |---|---|
 | `GET /api/presence?userIds=<uuid>,<uuid>` (max 100) | `{ items: [{ userId, isOnline, connectionCount, lastChangedAt }] }` |
 | `GET /api/presence/me` | `{ userId, isOnline, connectionCount, lastChangedAt }` |
+| either, while Redis is down | `503` `{ "message": "Presence temporarily unavailable. Please try again later.", "error": "Service Unavailable", "statusCode": 503 }` — keep the last known state and retry later |
 
-`lastChangedAt` is `null` for a user who has not connected since the server started. Presence is
-**in-memory**: a server restart resets everyone to offline.
+`lastChangedAt` is the time of the user's last online↔offline change (heartbeats never move it), or
+`null` if the user never connected. It survives backend restarts. A crashed backend's socket stops
+counting the moment it expires, so `isOnline` can turn `false` up to one heartbeat (10 s) before
+`lastChangedAt` and the event catch up. A Redis outage never makes anyone offline: presence pauses
+and resumes by itself.
 
 ---
 
@@ -211,7 +238,8 @@ sequenceDiagram
 | `token:refresh` with a bad token | `token:refresh:error` then disconnect | same as above |
 | `board:join` refused for any reason | `board:join:error` (generic message), socket stays connected | show the not-found state for that project; retry only on the next `connect` |
 | `board:leave` with a bad payload | nothing | — |
-| Server restart | every socket disconnects; presence resets | let socket.io-client reconnect; re-send `board:join` on `connect` (hook below) |
+| Server restart | that server's sockets disconnect; presence is kept in Redis (a normal stop removes that server's sockets at once, a crash within ~40 s) | let socket.io-client reconnect; re-send `board:join` and refetch presence on `connect` (hooks below) |
+| `GET /api/presence*` while Redis is down | `503` with a generic body | keep the last known presence; retry on the next refetch |
 
 Messages are intentionally uninformative: the WS channel must not reveal whether a project exists
 or who is a member.
@@ -318,11 +346,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     s.on('notification:new', () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] }); // list + unread-count
     });
+    s.on('connect', () => {
+      // Presence events from other backends never reach this socket: refetch on every (re)connect.
+      queryClient.invalidateQueries({ queryKey: ['presence'] });
+    });
     s.on('presence:update', (p) => {
       queryClient.setQueriesData<PresenceListResponse>({ queryKey: ['presence'] }, (old) =>
         old && {
           items: old.items.map((i) =>
-            i.userId === p.userId
+            i.userId === p.userId && (i.lastChangedAt === null || p.timestamp >= i.lastChangedAt) // drop stale
               ? { ...i, isOnline: p.isOnline, connectionCount: p.connectionCount, lastChangedAt: p.timestamp }
               : i,
           ),
@@ -407,7 +439,7 @@ else in this file changes.
 |---|---|
 | `POST /api/auth/login`, `POST /api/auth/refresh` | `access_token` used as the socket `auth.token` |
 | `GET /api/notifications`, `GET /api/notifications/unread-count` | refetched on `notification:new` |
-| `GET /api/presence?userIds=…`, `GET /api/presence/me` | initial presence state, patched by `presence:update` |
+| `GET /api/presence?userIds=…`, `GET /api/presence/me` | presence state, patched by `presence:update`; refetch on `connect`, focus and every ~30 s (`refetchInterval: 30_000`) |
 | `GET /api/board/{projectId}` | the board a `board:join` subscribes to |
 
 All of them require `Authorization: Bearer <access_token>`.
